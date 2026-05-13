@@ -16,8 +16,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
+    from backend.scan_logger import logger
+    logger.info("===== Backend startup =====")
     init_db()
     start_scheduler()
+    logger.info("Database initialized, scheduler started")
 
 
 @app.on_event("shutdown")

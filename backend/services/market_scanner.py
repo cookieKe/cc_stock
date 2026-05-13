@@ -8,21 +8,33 @@ from backend.strategy_engine.evaluator import (
     load_strategies_from_db, evaluate_stock, aggregate_scores
 )
 from backend.config import settings
+from backend.scan_logger import logger
+
+_log = logger.getChild("scanner")
 
 
 def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
     """扫描全市场，执行启用策略，返回排名结果。"""
+    _log.info(f"===== 扫描开始 strategy_ids={strategy_ids} =====")
+
     all_strategies = load_strategies_from_db(db)
     if strategy_ids:
+        _log.info(f"过滤前策略数: {len(all_strategies)}, 过滤条件: {strategy_ids}")
         all_strategies = [s for s in all_strategies if s["id"] in strategy_ids]
+    _log.info(f"最终使用策略: {[(s['id'], s['name'], s['weight']) for s in all_strategies]}")
+
     if not all_strategies:
+        _log.warning("没有启用的策略，扫描中止")
         return {"error": "没有启用的策略"}
 
-    db.query(ScanResult).filter(ScanResult.scan_date == date.today()).delete()
+    _log.info(f"删除今日({date.today()})已有扫描结果...")
+    deleted = db.query(ScanResult).filter(ScanResult.scan_date == date.today()).delete()
+    _log.info(f"删除了 {deleted} 条旧记录")
 
     codes = [s[0] for s in db.query(Stock.code).filter(Stock.is_active == True).order_by(Stock.code).all()]  # noqa: E712
     batch_size = settings.scan_batch_size
     scan_date = date.today()
+    _log.info(f"活跃股票总数: {len(codes)}, 批大小: {batch_size}")
 
     all_results = []
     for i in range(0, len(codes), batch_size):
@@ -44,9 +56,26 @@ def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
                 })
             except Exception:
                 pass
+        if all_results:
+            _log.debug(f"批次 {i//batch_size + 1}: 累计 {len(all_results)} 只有得分股票")
         db.commit()
 
     all_results.sort(key=lambda x: x["weighted_score"], reverse=True)
+    _log.info(f"排序完成，有得分的股票总数: {len(all_results)}")
+
+    # Log top and bottom
+    if all_results:
+        top_n = min(10, len(all_results))
+        _log.info(f"Top {top_n}:")
+        for i in range(top_n):
+            r = all_results[i]
+            _log.info(f"  #{i+1} {r['code']} {r['name']} weighted={r['weighted_score']} scores={r['scores']}")
+        if len(all_results) > 10:
+            _log.info(f"  ... (省略 {len(all_results) - 20} 条) ...")
+            for i in range(max(10, len(all_results) - 10), len(all_results)):
+                r = all_results[i]
+                _log.info(f"  #{i+1} {r['code']} {r['name']} weighted={r['weighted_score']} scores={r['scores']}")
+
     for rank, r in enumerate(all_results, 1):
         r["rank"] = rank
         for strat_name, raw_score in r["scores"].items():
@@ -62,6 +91,16 @@ def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
                 rank=rank,
             ))
     db.commit()
+    _log.info(f"写入 {len(all_results)} 条扫描结果到DB，完成")
+
+    # Also log how get_latest_ranking would respond
+    from sqlalchemy import func
+    latest = db.query(func.max(ScanResult.scan_date)).scalar()
+    for s in all_strategies:
+        cnt = db.query(ScanResult).filter(
+            ScanResult.scan_date == latest, ScanResult.strategy_name == s["name"]
+        ).count()
+        _log.info(f"  策略 {s['name']}: DB中 {cnt} 条记录")
 
     return {
         "scan_date": str(scan_date),

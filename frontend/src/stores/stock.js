@@ -116,11 +116,11 @@ export const useStockStore = defineStore('stock', {
         this.syncLoading = false
       }
     },
-    async runScan() {
+    async runScan(strategyName) {
       this.scanLoading = true
       this.message = null
       try {
-        const res = await api.runScan()
+        const res = await api.runScan(strategyName)
         if (res.data?.error) {
           this.message = { type: 'error', text: res.data.error }
         } else {

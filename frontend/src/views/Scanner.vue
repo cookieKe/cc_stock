@@ -69,7 +69,7 @@ async function onScroll(e) {
   }
 }
 async function runScan() {
-  await store.runScan()
+  await store.runScan(strategyFilter.value)
   await loadRankings()
 }
 async function addWatch(code) {

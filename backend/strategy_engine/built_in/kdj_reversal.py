@@ -17,6 +17,9 @@ class KDJReversalStrategy(BaseStrategy):
         "high_weight": 0.25,
     }
 
+    def get_required_data(self) -> dict:
+        return {"kline_days": max(self.parameters["kdj_n"], self.parameters["lookback_days"]) + 10}
+
     def score(self, code: str, df: pd.DataFrame, financials=None) -> float:
         p = self.parameters
         n = p["kdj_n"]

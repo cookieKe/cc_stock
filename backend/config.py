@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     im_bot_type: str = "wecom"
     api_retry_count: int = 3
     api_retry_backoff: float = 1.5
+    tushare_concurrency_delay: float = 1.5
 
     model_config = {"env_file": ".env.dev", "extra": "ignore"}
 
