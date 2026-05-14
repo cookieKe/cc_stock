@@ -84,8 +84,8 @@ _EVAL_SAMPLE = 3  # log first N stocks in detail
 _EVAL_LOG_INTERVAL = 500  # progress log every N stocks
 
 
-def evaluate_stock(db: Session, code: str, strategies: List[dict]) -> Dict[str, float]:
-    """对单只股票执行所有策略，返回各策略评分。"""
+def evaluate_stock(db: Session, code: str, strategies: List[dict]) -> Dict[str, dict]:
+    """对单只股票执行所有策略，返回 {策略名: {"score": float, "matched_pattern": str|None}}。"""
     global _eval_count
     _eval_count += 1
     results = {}
@@ -98,7 +98,7 @@ def evaluate_stock(db: Session, code: str, strategies: List[dict]) -> Dict[str, 
             if kline is None:
                 kline = get_kline_data(db, code, days)
             if kline.empty:
-                results[strat["name"]] = 0.0
+                results[strat["name"]] = {"score": 0.0, "matched_pattern": None}
                 if _eval_count <= _EVAL_SAMPLE:
                     _log.debug(f"[#{_eval_count}] {code} kline empty (days={days}), score=0")
                 continue
@@ -107,11 +107,15 @@ def evaluate_stock(db: Session, code: str, strategies: List[dict]) -> Dict[str, 
                 if fin is None:
                     fin = get_financials_data(db, code)
             raw = s.score(code, kline, fin)
-            results[strat["name"]] = raw
+            info = {"score": raw, "matched_pattern": None}
+            if hasattr(s, "last_matched_pattern"):
+                info["matched_pattern"] = s.last_matched_pattern
+            results[strat["name"]] = info
             if _eval_count <= _EVAL_SAMPLE or raw > 0:
-                _log.debug(f"[#{_eval_count}] {code} strategy={strat['name']} kline_rows={len(kline)} kline_range={kline.iloc[0]['date']}~{kline.iloc[-1]['date']} raw_score={raw}")
+                pat = info["matched_pattern"]
+                _log.debug(f"[#{_eval_count}] {code} strategy={strat['name']} kline_rows={len(kline)} kline_range={kline.iloc[0]['date']}~{kline.iloc[-1]['date']} raw_score={raw} pattern={pat}")
         except Exception as e:
-            results[strat["name"]] = 0.0
+            results[strat["name"]] = {"score": 0.0, "matched_pattern": None}
             if _eval_count <= _EVAL_SAMPLE:
                 _log.warning(f"[#{_eval_count}] {code} strategy={strat['name']} ERROR: {e}")
 
@@ -121,13 +125,13 @@ def evaluate_stock(db: Session, code: str, strategies: List[dict]) -> Dict[str, 
     return results
 
 
-def aggregate_scores(scores: Dict[str, float], strategies: List[dict]) -> float:
-    """加权汇总各策略评分。"""
+def aggregate_scores(scores: Dict[str, dict], strategies: List[dict]) -> float:
+    """加权汇总各策略评分。scores 为 {策略名: {"score": float, ...}}。"""
     total_weight = sum(s["weight"] for s in strategies)
     if total_weight == 0:
         return 0.0
     weighted = sum(
-        scores.get(s["name"], 0) * s["weight"]
+        scores.get(s["name"], {}).get("score", 0) * s["weight"]
         for s in strategies
     )
     return round(weighted / total_weight, 2)

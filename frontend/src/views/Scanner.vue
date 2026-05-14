@@ -22,13 +22,14 @@
       <h3>排名结果 ({{ store.rankings.length }} / {{ store.rankingsTotal }} 只)</h3>
       <div class="table-scroll" @scroll="onScroll" ref="scrollContainer">
         <table>
-          <thead><tr><th>排名</th><th>代码</th><th>名称</th><th>评分</th><th>操作</th></tr></thead>
+          <thead><tr><th>排名</th><th>代码</th><th>名称</th><th>评分</th><th>匹配形态</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="r in store.rankings" :key="r.code">
               <td><b>#{{ r.rank }}</b></td>
               <td>{{ r.code }}</td>
               <td><router-link :to="`/stock/${r.code}`">{{ r.name }}</router-link></td>
               <td><b>{{ r.score }}</b></td>
+              <td><span :style="r.matched_pattern ? 'color:#1890ff;font-weight:bold' : 'color:#ccc'">{{ r.matched_pattern || '-' }}</span></td>
               <td><button class="btn btn-primary btn-sm" @click="addWatch(r.code)">+追踪</button></td>
             </tr>
           </tbody>

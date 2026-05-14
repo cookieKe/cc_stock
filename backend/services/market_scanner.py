@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from sqlalchemy.orm import Session
 from typing import List, Dict
@@ -45,7 +46,7 @@ def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
                 if not stock:
                     continue
                 scores = evaluate_stock(db, code, all_strategies)
-                if not scores or all(v == 0 for v in scores.values()):
+                if not scores or all(v.get("score", 0) == 0 for v in scores.values()):
                     continue
                 weighted = aggregate_scores(scores, all_strategies)
                 all_results.append({
@@ -78,8 +79,11 @@ def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
 
     for rank, r in enumerate(all_results, 1):
         r["rank"] = rank
-        for strat_name, raw_score in r["scores"].items():
+        for strat_name, score_info in r["scores"].items():
             strategy = next((s for s in all_strategies if s["name"] == strat_name), None)
+            raw_score = score_info.get("score", 0)
+            matched_pattern = score_info.get("matched_pattern", None)
+            detail = json.dumps({"matched_pattern": matched_pattern}, ensure_ascii=False) if matched_pattern else "{}"
             db.add(ScanResult(
                 scan_date=scan_date,
                 stock_code=r["code"],
@@ -89,6 +93,7 @@ def scan_market(db: Session, strategy_ids: List[int] = None) -> dict:
                 raw_score=raw_score,
                 weighted_score=round(raw_score * (strategy["weight"] if strategy else 1), 2),
                 rank=rank,
+                detail=detail,
             ))
     db.commit()
     _log.info(f"写入 {len(all_results)} 条扫描结果到DB，完成")
@@ -135,7 +140,13 @@ def get_latest_ranking(db: Session, strategy_name: str = None, limit: int = 50, 
             .all()
         )
         items = [
-            {"rank": offset + i + 1, "code": r.stock_code, "name": r.stock_name, "score": r.weighted_score}
+            {
+                "rank": offset + i + 1,
+                "code": r.stock_code,
+                "name": r.stock_name,
+                "score": r.weighted_score,
+                "matched_pattern": _parse_pattern(r.detail),
+            }
             for i, r in enumerate(rows)
         ]
         return {"items": items, "total": total, "limit": limit, "offset": offset, "scan_date": str(latest_date)}
@@ -156,10 +167,27 @@ def get_latest_ranking(db: Session, strategy_name: str = None, limit: int = 50, 
     total = len(deduped)
     page = deduped[offset:offset + limit]
     items = [
-        {"rank": offset + i + 1, "code": r.stock_code, "name": r.stock_name, "score": r.weighted_score}
+        {
+            "rank": offset + i + 1,
+            "code": r.stock_code,
+            "name": r.stock_name,
+            "score": r.weighted_score,
+            "matched_pattern": _parse_pattern(r.detail),
+        }
         for i, r in enumerate(page)
     ]
     return {"items": items, "total": total, "limit": limit, "offset": offset, "scan_date": str(latest_date)}
+
+
+def _parse_pattern(detail: str) -> str | None:
+    """从 detail JSON 中提取 matched_pattern。"""
+    if not detail or detail == "{}":
+        return None
+    try:
+        d = json.loads(detail)
+        return d.get("matched_pattern")
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def get_scan_history(db: Session, code: str, days: int = 30) -> List[dict]:
