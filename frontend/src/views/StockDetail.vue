@@ -253,8 +253,8 @@ function renderChart(kline, kdj, vol, deepV) {
       {
         name: '知行短期(双EMA10)', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
         data: kline.zhixng_short || [], symbol: 'none', connectNulls: true,
-        lineStyle: { width: 1, color: '#ffffff', opacity: 0.6 },
-        itemStyle: { color: '#ffffff' },
+        lineStyle: { width: 1, color: '#fa8c16' },
+        itemStyle: { color: '#fa8c16' },
       },
       {
         name: '知行多空线(BBI)', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
