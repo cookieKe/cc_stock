@@ -1,6 +1,7 @@
 import threading
 from datetime import date, timedelta, datetime, time
 
+import pandas as pd
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -14,11 +15,12 @@ from backend.models.watchlist import Watchlist
 from backend.models.backtest import Backtest
 from backend.models.notification import Notification
 from backend.models.strategy import Strategy
-from backend.services.data_sync import get_last_trade_date, get_source_manager
+from backend.services.data_sync import get_last_trade_date
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
-_market_cache = {"data": None, "trade_date": None, "cache_until": None}
+_CACHE_VERSION = 2  # 递增此版本号使所有旧缓存自动失效
+_market_cache = {"data": None, "trade_date": None, "cache_until": None, "version": 0}
 _market_cache_lock = threading.Lock()
 
 
@@ -179,6 +181,7 @@ def get_market_overview(db: Session = Depends(get_db)):
 
     with _market_cache_lock:
         if (_market_cache["data"] is not None
+                and _market_cache["version"] == _CACHE_VERSION
                 and _market_cache["trade_date"] == latest_trade_date
                 and _market_cache["cache_until"] is not None):
             if _in_cache_window(now, _market_cache["trade_date"], _market_cache["cache_until"]):
@@ -196,17 +199,40 @@ def get_market_overview(db: Session = Depends(get_db)):
             _market_cache["data"] = data
             _market_cache["trade_date"] = latest_trade_date
             _market_cache["cache_until"] = cache_until
+            _market_cache["version"] = _CACHE_VERSION
 
     data["cached"] = False
     return data
 
 
-def _fetch_one_index(mgr, symbol: str, name: str, start_str: str, end_str: str) -> dict:
+def _fetch_one_index(symbol: str, name: str, start_str: str, end_str: str) -> dict:
     info = {"name": name, "code": symbol, "latest": None, "change_pct": None,
             "dates": [], "closes": []}
     try:
-        df, _ = mgr.fetch_index_kline(symbol, start_str, end_str)
+        import akshare as ak
+
+        # 深证用 sz 前缀，上证用 sh 前缀
+        prefix = "sh" if symbol.startswith("000") else "sz"
+        em_symbol = f"{prefix}{symbol}"
+
+        df = None
+        for try_symbol in [em_symbol, symbol]:
+            try:
+                df = ak.stock_zh_index_daily_em(symbol=try_symbol)
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
+        if df is None or df.empty:
+            return info
+
+        # 统一列名
+        if "date" not in df.columns:
+            return info
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+
         if not df.empty and len(df) >= 2:
+            df = df.sort_values("date")
             info["dates"] = [str(d) for d in df["date"].tolist()]
             closes = df["close"].tolist()
             info["closes"] = [round(float(c), 2) for c in closes]
@@ -220,12 +246,11 @@ def _fetch_one_index(mgr, symbol: str, name: str, start_str: str, end_str: str) 
 
 
 def _compute_market_overview(db: Session, latest_trade_date) -> dict:
-    mgr = get_source_manager()
     today_str = str(date.today())
     start_str = str(date.today() - timedelta(days=180))
 
-    sh_index = _fetch_one_index(mgr, "000001", "上证指数", start_str, today_str)
-    sz_index = _fetch_one_index(mgr, "399001", "深证成指", start_str, today_str)
+    sh_index = _fetch_one_index("000001", "上证指数", start_str, today_str)
+    sz_index = _fetch_one_index("399001", "深证成指", start_str, today_str)
 
     # 活跃市值 OAMV: 从通达信直接获取活筹指数 880855
     active_cap = _fetch_oamv_tdx()
@@ -264,13 +289,37 @@ def _oamv_from_tdx(df) -> dict:
 
 def _fetch_oamv_tdx() -> dict:
     """从通达信获取活筹指数 880855。失败则返回空结构。"""
+    empty = {"name": "活跃市值(0AMV)", "latest": None, "change_pct": None,
+             "dates": [], "values": []}
     try:
         import akshare as ak
-        df = ak.stock_zh_index_daily_tx(symbol="880855")
-        return _oamv_from_tdx(df)
+        # 试多种可能的函数名和参数格式
+        df = None
+        for fn_name in ["stock_zh_index_daily_tx", "index_zh_a_hist"]:
+            try:
+                fn = getattr(ak, fn_name, None)
+                if fn is None:
+                    continue
+                if fn_name == "index_zh_a_hist":
+                    df = fn(symbol="880855", period="daily",
+                            start_date="20100101", end_date=str(date.today()))
+                else:
+                    df = fn(symbol="880855")
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
+        if df is not None and not df.empty:
+            # 统一列名为英文
+            rename_map = {
+                "日期": "date", "开盘": "open", "最高": "high",
+                "最低": "low", "收盘": "close", "成交量": "volume", "成交额": "amount",
+            }
+            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            return _oamv_from_tdx(df)
     except Exception:
-        return {"name": "活跃市值(0AMV)", "latest": None, "change_pct": None,
-                "dates": [], "values": []}
+        pass
+    return empty
 
 
 def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
@@ -354,3 +403,13 @@ def _parse_szse_cap(df) -> float | None:
         return float(stock_rows.iloc[0][col])
     except Exception:
         return None
+
+
+@router.delete("/market-overview/cache")
+def clear_market_overview_cache():
+    with _market_cache_lock:
+        _market_cache["data"] = None
+        _market_cache["trade_date"] = None
+        _market_cache["cache_until"] = None
+        _market_cache["version"] = 0
+    return {"ok": True, "message": "市场概览缓存已清除"}

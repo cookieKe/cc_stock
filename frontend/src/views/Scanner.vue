@@ -41,6 +41,7 @@
       </div>
       <div class="overview-footer" v-if="marketData.cached">
         <span class="cache-hint">已缓存 · {{ marketData.trade_date }}</span>
+        <button class="btn btn-default btn-sm" @click="clearCache">清除缓存</button>
       </div>
     </div>
 
@@ -189,6 +190,13 @@ function renderSparkline(i, item) {
       ]) },
     }],
   })
+}
+
+async function clearCache() {
+  try {
+    await api.clearMarketOverviewCache()
+    await loadMarketOverview()
+  } catch { /* ignore */ }
 }
 
 onMounted(() => {
