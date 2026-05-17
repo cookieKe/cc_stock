@@ -19,7 +19,7 @@ from backend.services.data_sync import get_last_trade_date
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
-_CACHE_VERSION = 2  # 递增此版本号使所有旧缓存自动失效
+_CACHE_VERSION = 3  # 递增此版本号使所有旧缓存自动失效
 _market_cache = {"data": None, "trade_date": None, "cache_until": None, "version": 0}
 _market_cache_lock = threading.Lock()
 
@@ -206,40 +206,30 @@ def get_market_overview(db: Session = Depends(get_db)):
 
 
 def _fetch_one_index(symbol: str, name: str, start_str: str, end_str: str) -> dict:
+    """使用新浪接口获取指数日线。东财接口在此网络环境不可用。"""
     info = {"name": name, "code": symbol, "latest": None, "change_pct": None,
             "dates": [], "closes": []}
     try:
         import akshare as ak
-
-        # 深证用 sz 前缀，上证用 sh 前缀
         prefix = "sh" if symbol.startswith("000") else "sz"
-        em_symbol = f"{prefix}{symbol}"
+        sina_symbol = f"{prefix}{symbol}"
 
-        df = None
-        for try_symbol in [em_symbol, symbol]:
-            try:
-                df = ak.stock_zh_index_daily_em(symbol=try_symbol)
-                if df is not None and not df.empty:
-                    break
-            except Exception:
-                continue
+        df = ak.stock_zh_index_daily(symbol=sina_symbol)
         if df is None or df.empty:
             return info
 
-        # 统一列名
-        if "date" not in df.columns:
-            return info
         df["date"] = pd.to_datetime(df["date"]).dt.date
+        if len(df) < 2:
+            return info
 
-        if not df.empty and len(df) >= 2:
-            df = df.sort_values("date")
-            info["dates"] = [str(d) for d in df["date"].tolist()]
-            closes = df["close"].tolist()
-            info["closes"] = [round(float(c), 2) for c in closes]
-            info["latest"] = round(float(closes[-1]), 2)
-            prev = float(closes[-2])
-            if prev > 0:
-                info["change_pct"] = round((float(closes[-1]) - prev) / prev * 100, 2)
+        df = df.sort_values("date")
+        info["dates"] = [str(d) for d in df["date"].tolist()]
+        closes = df["close"].tolist()
+        info["closes"] = [round(float(c), 2) for c in closes]
+        info["latest"] = round(float(closes[-1]), 2)
+        prev = float(closes[-2])
+        if prev > 0:
+            info["change_pct"] = round((float(closes[-1]) - prev) / prev * 100, 2)
     except Exception:
         pass
     return info
@@ -252,8 +242,8 @@ def _compute_market_overview(db: Session, latest_trade_date) -> dict:
     sh_index = _fetch_one_index("000001", "上证指数", start_str, today_str)
     sz_index = _fetch_one_index("399001", "深证成指", start_str, today_str)
 
-    # 活跃市值 OAMV: 从通达信直接获取活筹指数 880855
-    active_cap = _fetch_oamv_tdx()
+    # 活跃市值 OAMV: 尝试外部数据源，失败则本地近似计算
+    active_cap = _fetch_oamv_tdx(db, latest_trade_date)
 
     # 总市值最新值 + 历史趋势线
     total_cap = _fetch_total_cap_with_history(db, latest_trade_date)
@@ -287,39 +277,87 @@ def _oamv_from_tdx(df) -> dict:
     return result
 
 
-def _fetch_oamv_tdx() -> dict:
-    """从通达信获取活筹指数 880855。失败则返回空结构。"""
-    empty = {"name": "活跃市值(0AMV)", "latest": None, "change_pct": None,
-             "dates": [], "values": []}
+def _fetch_oamv_tdx(db: Session, latest_trade_date) -> dict:
+    """活跃市值 OAMV: 尝试外部数据源，失败则用本地数据近似计算。
+
+    近似公式: daily_raw = Σ(open × amount) / 10^7, OAMV = SMA(daily_raw, 10)
+    """
+    # 先尝试从新浪/腾讯获取 880855 活筹指数
     try:
         import akshare as ak
-        # 试多种可能的函数名和参数格式
-        df = None
-        for fn_name in ["stock_zh_index_daily_tx", "index_zh_a_hist"]:
+        for fn, args in [
+            (ak.stock_zh_index_daily_tx, {"symbol": "sz880855"}),
+            (ak.stock_zh_index_daily, {"symbol": "sz880855"}),
+        ]:
             try:
-                fn = getattr(ak, fn_name, None)
-                if fn is None:
-                    continue
-                if fn_name == "index_zh_a_hist":
-                    df = fn(symbol="880855", period="daily",
-                            start_date="20100101", end_date=str(date.today()))
-                else:
-                    df = fn(symbol="880855")
+                df = fn(**args)
                 if df is not None and not df.empty:
-                    break
+                    rename_map = {"日期": "date", "收盘": "close"}
+                    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+                    return _oamv_from_tdx(df)
             except Exception:
                 continue
-        if df is not None and not df.empty:
-            # 统一列名为英文
-            rename_map = {
-                "日期": "date", "开盘": "open", "最高": "high",
-                "最低": "low", "收盘": "close", "成交量": "volume", "成交额": "amount",
-            }
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-            return _oamv_from_tdx(df)
     except Exception:
         pass
-    return empty
+
+    # 降级: 本地近似计算
+    return _compute_oamv_local(db, latest_trade_date)
+
+
+def _compute_oamv_local(db: Session, latest_trade_date) -> dict:
+    """本地近似 OAMV: Σ(open×amount)/10^7 的 10日均线。"""
+    result = {"name": "活跃市值(OAMV)", "latest": None, "change_pct": None,
+              "dates": [], "values": []}
+    if not latest_trade_date:
+        return result
+
+    start = latest_trade_date - timedelta(days=200)
+    rows = (
+        db.query(
+            MarketData.trade_date,
+            func.sum(MarketData.open * MarketData.amount).label("daily_sum"),
+        )
+        .filter(
+            MarketData.trade_date >= start,
+            MarketData.trade_date <= latest_trade_date,
+        )
+        .group_by(MarketData.trade_date)
+        .order_by(MarketData.trade_date)
+        .all()
+    )
+    if len(rows) < 10:
+        return result
+
+    raw = [round(float(r.daily_sum / 10_000_000), 2) if r.daily_sum else None for r in rows]
+    dates_list = [str(r.trade_date) for r in rows]
+
+    oamv = []
+    for i in range(len(raw)):
+        if i < 9:
+            oamv.append(None)
+        else:
+            window = raw[i - 9:i + 1]
+            oamv.append(round(sum(v for v in window if v is not None) / 10, 2)
+                        if all(v is not None for v in window) else None)
+
+    result["dates"] = dates_list
+    result["values"] = oamv
+    last_val = None
+    for v in reversed(oamv):
+        if v is not None:
+            last_val = v
+            break
+    if last_val is not None:
+        result["latest"] = last_val
+        found = False
+        for v in reversed(oamv):
+            if v is not None:
+                if found:
+                    if v != 0:
+                        result["change_pct"] = round((last_val - v) / v * 100, 2)
+                    break
+                found = True
+    return result
 
 
 def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
@@ -327,12 +365,12 @@ def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
     result = {"name": "总市值", "latest": None, "change_pct": None,
               "dates": [], "values": []}
 
-    # 1. 最新总市值：SSE + SZSE 汇总
+    # 1. 最新总市值：SSE + SZSE 汇总（不传date参数否则SZSE报错）
     total_cap = None
     try:
         import akshare as ak
         sse = ak.stock_sse_summary()
-        szse = ak.stock_szse_summary(date=str(date.today()))
+        szse = ak.stock_szse_summary()
         sse_cap = _parse_sse_cap(sse)
         szse_cap = _parse_szse_cap(szse)
         if sse_cap and szse_cap:
@@ -341,7 +379,7 @@ def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
         pass
 
     # 2. 历史趋势线：全A股 SUM(close) 近似替代总市值趋势
-    if latest_trade_date:
+    if latest_trade_date and total_cap:
         start = latest_trade_date - timedelta(days=200)
         rows = (
             db.query(
@@ -356,8 +394,7 @@ def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
             .order_by(MarketData.trade_date)
             .all()
         )
-        if rows and total_cap:
-            # 以最新日的 sum_close 为锚点，缩放至总市值
+        if rows:
             latest_sum = float(rows[-1].sum_close) if rows[-1].sum_close else 1
             scale = total_cap / latest_sum if latest_sum > 0 else 1
             result["dates"] = [str(r.trade_date) for r in rows]
@@ -365,7 +402,7 @@ def _fetch_total_cap_with_history(db: Session, latest_trade_date) -> dict:
 
     if total_cap:
         result["latest"] = total_cap
-    if len(result["values"]) >= 2:
+    if len(result.get("values", [])) >= 2:
         vals = result["values"]
         last = vals[-1]
         prev = vals[-2]
@@ -379,14 +416,13 @@ def _parse_sse_cap(df) -> float | None:
     try:
         if df is None or df.empty:
             return None
-        stock_row = df[df["项目"] == "股票"]
-        if stock_row.empty:
-            stock_row = df[df.iloc[:, 0].str.contains("股票", na=False)]
-        if stock_row.empty:
+        # SSE summary 列: 项目, 股票(合计), 主板, 科创板
+        row = df[df["项目"] == "总市值"]
+        if row.empty:
             return None
-        col = "总市值" if "总市值" in df.columns else df.columns[1]
-        val = stock_row.iloc[0][col]
-        return float(val) * 1e8  # SSE 返回的是亿元
+        # "股票" 列为合计值
+        col = "股票" if "股票" in df.columns else df.columns[1]
+        return float(row.iloc[0][col]) * 1e8  # 亿元 → 元
     except Exception:
         return None
 
@@ -396,11 +432,14 @@ def _parse_szse_cap(df) -> float | None:
     try:
         if df is None or df.empty:
             return None
-        stock_rows = df[df["证券类别"] == "股票"]
-        if stock_rows.empty:
+        # SZSE summary 列: 证券类别, 数量, 成交金额, 总市值, 流通市值
+        if "证券类别" not in df.columns:
             return None
-        col = "总市值" if "总市值" in df.columns else df.columns[2]
-        return float(stock_rows.iloc[0][col])
+        row = df[df["证券类别"] == "股票"]
+        if row.empty:
+            return None
+        col = "总市值" if "总市值" in df.columns else df.columns[3]
+        return float(row.iloc[0][col])
     except Exception:
         return None
 
