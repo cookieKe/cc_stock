@@ -14,6 +14,7 @@
             </span>
           </div>
         </div>
+        <!-- 活跃市值 (0AMV) -->
         <div v-if="marketData.active_market_cap" class="index-panel">
           <div :ref="el => sparkRefs[2] = el" class="sparkline"></div>
           <div class="index-info">
@@ -25,13 +26,21 @@
             </span>
           </div>
         </div>
+        <!-- 总市值 -->
+        <div v-if="marketData.total_market_cap && marketData.total_market_cap.latest" class="index-panel">
+          <div :ref="el => sparkRefs[3] = el" class="sparkline"></div>
+          <div class="index-info">
+            <span class="index-label">{{ marketData.total_market_cap.name }}</span>
+            <span class="index-value">{{ formatCapShort(marketData.total_market_cap.latest) }}</span>
+            <span v-if="marketData.total_market_cap.change_pct != null"
+                  :class="marketData.total_market_cap.change_pct >= 0 ? 'positive' : 'negative'">
+              {{ marketData.total_market_cap.change_pct >= 0 ? '+' : '' }}{{ marketData.total_market_cap.change_pct }}%
+            </span>
+          </div>
+        </div>
       </div>
-      <div class="overview-footer">
-        <span class="cap-info" v-if="marketData.total_market_cap">
-          总市值 {{ formatCap(marketData.total_market_cap) }}
-        </span>
-        <span class="cap-info" v-else style="color:#ccc">总市值数据获取中...</span>
-        <span class="cache-hint" v-if="marketData.cached">已缓存 · {{ marketData.trade_date }}</span>
+      <div class="overview-footer" v-if="marketData.cached">
+        <span class="cache-hint">已缓存 · {{ marketData.trade_date }}</span>
       </div>
     </div>
 
@@ -119,6 +128,12 @@ function formatCap(n) {
   if (n >= 1e12) return (n / 1e12).toFixed(1) + '万亿'
   return (n / 1e8).toFixed(0) + '亿'
 }
+function formatCapShort(n) {
+  if (!n) return '-'
+  if (n >= 1e12) return (n / 1e12).toFixed(1) + '万亿'
+  if (n >= 1e8) return (n / 1e8).toFixed(1) + '亿'
+  return n
+}
 
 async function loadMarketOverview() {
   try {
@@ -133,6 +148,9 @@ async function loadMarketOverview() {
     // 活跃市值作为第3个面板
     const amv = data.active_market_cap
     if (amv && amv.dates && amv.dates.length) renderSparkline(2, amv)
+    // 总市值作为第4个面板
+    const tcap = data.total_market_cap
+    if (tcap && tcap.dates && tcap.dates.length) renderSparkline(3, tcap)
   } catch { /* ignore */ }
 }
 
@@ -148,12 +166,18 @@ function renderSparkline(i, item) {
   const lineColor = isUp ? '#cf1322' : '#3f8600'
   const areaColor = isUp ? 'rgba(207,19,34,0.06)' : 'rgba(63,134,0,0.06)'
 
+  const yFmt = (v) => {
+    if (v >= 1e12) return (v / 1e12).toFixed(1) + '万亿'
+    if (v >= 1e8) return (v / 1e8).toFixed(0) + '亿'
+    if (v >= 1000) return (v / 1000).toFixed(0) + 'k'
+    return v
+  }
   sparkCharts[i].setOption({
-    grid: { left: 0, right: 42, top: 6, bottom: 0 },
+    grid: { left: 0, right: 48, top: 6, bottom: 0 },
     xAxis: { type: 'category', data: dates, show: false },
     yAxis: {
       type: 'value', scale: true, splitNumber: 3,
-      axisLabel: { fontSize: 9, color: '#999', formatter: v => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v },
+      axisLabel: { fontSize: 9, color: '#999', formatter: yFmt },
       splitLine: { lineStyle: { type: 'dashed', color: '#f0f0f0' } },
     },
     series: [{
