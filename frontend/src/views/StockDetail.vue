@@ -1,8 +1,15 @@
 <template>
   <div class="stock-detail">
     <div class="detail-header">
-      <h2>{{ stock.name }} ({{ stock.code }})</h2>
-      <button class="btn btn-primary btn-sm" @click="addWatch">+ 加入追踪</button>
+      <div class="header-left">
+        <h2>{{ stock.name }} ({{ stock.code }})</h2>
+        <span v-if="navCodes.length" class="nav-info">{{ currentIndex + 1 }} / {{ navCodes.length }}</span>
+      </div>
+      <div class="header-right">
+        <button class="btn btn-default btn-sm" :disabled="!prevCode" @click="goPrev" title="上一个 (←)">◀ 上一个</button>
+        <button class="btn btn-default btn-sm" :disabled="!nextCode" @click="goNext" title="下一个 (→)">下一个 ▶</button>
+        <button class="btn btn-primary btn-sm" @click="addWatch">+ 加入追踪</button>
+      </div>
     </div>
 
     <div class="card chart-card">
@@ -12,30 +19,77 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, watch, computed, onBeforeUnmount, onActivated } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import api from '../api'
+import { useStockStore } from '../stores/stock'
 
 const route = useRoute()
-const code = route.params.code
-const stock = ref({ code, name: '' })
+const router = useRouter()
+const store = useStockStore()
+const stock = ref({ code: '', name: '' })
 const chartRef = ref(null)
 let chart = null
 
-onMounted(async () => {
+const navCodes = computed(() => {
+  return store.rankings.map(r => r.code)
+})
+
+const currentIndex = computed(() => {
+  return navCodes.value.indexOf(route.params.code)
+})
+
+const prevCode = computed(() => {
+  const idx = currentIndex.value
+  return idx > 0 ? navCodes.value[idx - 1] : null
+})
+
+const nextCode = computed(() => {
+  const idx = currentIndex.value
+  return idx >= 0 && idx < navCodes.value.length - 1 ? navCodes.value[idx + 1] : null
+})
+
+function goPrev() {
+  if (prevCode.value) router.push(`/stock/${prevCode.value}`)
+}
+
+function goNext() {
+  if (nextCode.value) router.push(`/stock/${nextCode.value}`)
+}
+
+function onKeyDown(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+  if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev() }
+  if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
+}
+
+window.addEventListener('keydown', onKeyDown)
+
+function disposeChart() {
+  if (chart) {
+    chart.dispose()
+    chart = null
+  }
+  window.removeEventListener('resize', onResize)
+}
+
+async function loadStock(newCode) {
+  disposeChart()
+  stock.value = { code: newCode, name: '' }
+
   try {
-    const detail = await api.getStock(code)
+    const detail = await api.getStock(newCode)
     stock.value = detail.data
   } catch (e) { /* ignore */ }
 
   const DAYS = 300
 
   const [klineRes, kdjRes, volRes, deepVRes] = await Promise.allSettled([
-    api.getKline(code, DAYS),
-    api.getKDJ(code, DAYS),
-    api.getVolume(code, DAYS),
-    api.getDeepV(code, DAYS),
+    api.getKline(newCode, DAYS),
+    api.getKDJ(newCode, DAYS),
+    api.getVolume(newCode, DAYS),
+    api.getDeepV(newCode, DAYS),
   ])
 
   const kline = klineRes.status === 'fulfilled' ? klineRes.value.data : null
@@ -46,14 +100,17 @@ onMounted(async () => {
   if (kline && kline.dates) {
     renderChart(kline, kdj, vol, deepV)
   }
+}
+
+watch(() => route.params.code, loadStock, { immediate: true })
+
+onActivated(() => {
+  if (chart) chart.resize()
 })
 
 onBeforeUnmount(() => {
-  if (chart) {
-    chart.dispose()
-    chart = null
-  }
-  window.removeEventListener('resize', onResize)
+  disposeChart()
+  window.removeEventListener('keydown', onKeyDown)
 })
 
 function onResize() {
@@ -68,6 +125,12 @@ function renderChart(kline, kdj, vol, deepV) {
   const dates = kline.dates
   const upColor = '#cf1322'
   const downColor = '#3f8600'
+
+  // OHLC with daily change % for tooltip
+  const ohlcData = kline.ohlc.map((d, i) => ({
+    value: d,
+    changePct: i > 0 ? ((d[1] - kline.ohlc[i - 1][1]) / kline.ohlc[i - 1][1] * 100).toFixed(2) : null,
+  }))
 
   // Volume data with colors
   const volData = (vol && vol.volumes)
@@ -123,14 +186,81 @@ function renderChart(kline, kdj, vol, deepV) {
       { gridIndex: 3, scale: true, splitLine: { lineStyle: { type: 'dashed', color: '#eee' } }, axisLabel: { fontSize: 10 } },
     ],
 
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: function (params) {
+        if (!params || !params.length) return ''
+        const first = params[0]
+
+        // K-line tooltip with OHLC + change % + trend indicators
+        if (first.seriesName === 'K线') {
+          const d = first.data
+          if (!d || !d.value) return ''
+          const v = d.value
+          const date = first.axisValue
+          let changeHtml = ''
+          if (d.changePct != null) {
+            const c = parseFloat(d.changePct)
+            const color = c >= 0 ? '#cf1322' : '#3f8600'
+            const sign = c >= 0 ? '+' : ''
+            changeHtml = `<br/>涨跌: <span style="color:${color};font-weight:bold">${sign}${d.changePct}%</span>`
+          }
+          // Extract trend indicator values from params
+          const zsShort = params.find(p => p.seriesName === '知行短期(双EMA10)')
+          const zsBB = params.find(p => p.seriesName === '知行多空线(BBI)')
+          let trendHtml = ''
+          if (zsShort && zsShort.data != null) {
+            trendHtml += `<br/>知行短期(双EMA10): ${typeof zsShort.data === 'number' ? zsShort.data.toFixed(2) : zsShort.data}`
+          }
+          if (zsBB && zsBB.data != null) {
+            trendHtml += `<br/>知行多空线(BBI): ${typeof zsBB.data === 'number' ? zsBB.data.toFixed(2) : zsBB.data}`
+          }
+          return `<div style="font-size:12px">
+            <b>${date}</b><br/>
+            开: ${v[0].toFixed(2)} 收: ${v[1].toFixed(2)} 低: ${v[2].toFixed(2)} 高: ${v[3].toFixed(2)}
+            ${changeHtml}${trendHtml}
+          </div>`
+        }
+
+        // Default tooltip for other series
+        let html = `<div style="font-size:12px"><b>${first.axisValue}</b></div>`
+        params.forEach(function (p) {
+          let val = '-'
+          if (p.data != null) {
+            if (typeof p.data === 'object' && !Array.isArray(p.data)) {
+              val = p.data.value != null ? p.data.value : '-'
+            } else {
+              val = p.data
+            }
+            if (typeof val === 'number') val = val.toFixed ? val.toFixed(2) : val
+          }
+          html += `<div>${p.marker} ${p.seriesName}: ${val}</div>`
+        })
+        return html
+      },
+    },
 
     series: [
       // ---- Grid 0: K-line ----
       {
         name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
-        data: kline.ohlc,
+        data: ohlcData,
         itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+      },
+
+      // ---- Grid 0 overlay: Trend indicators ----
+      {
+        name: '知行短期(双EMA10)', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+        data: kline.zhixng_short || [], symbol: 'none', connectNulls: true,
+        lineStyle: { width: 1, color: '#ffffff', opacity: 0.6 },
+        itemStyle: { color: '#ffffff' },
+      },
+      {
+        name: '知行多空线(BBI)', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+        data: kline.zhixng_bb || [], symbol: 'none', connectNulls: true,
+        lineStyle: { width: 1.5, color: '#1890ff' },
+        itemStyle: { color: '#1890ff' },
       },
 
       // ---- Grid 1: Volume ----
@@ -207,7 +337,7 @@ function renderChart(kline, kdj, vol, deepV) {
 }
 
 async function addWatch() {
-  await api.addToWatchlist(code)
+  await api.addToWatchlist(route.params.code)
 }
 </script>
 
@@ -220,10 +350,30 @@ async function addWatch() {
 
 .detail-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 16px;
   margin-bottom: 8px;
   flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav-info {
+  font-size: 13px;
+  color: #999;
+  background: #f5f5f5;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
 .detail-header h2 {

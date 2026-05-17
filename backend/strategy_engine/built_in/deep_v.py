@@ -18,9 +18,6 @@ class DeepVStrategy(BaseStrategy):
         "n1": 3,
         "n2": 21,
         "four_line_threshold": 6,
-        "short_low_threshold": 20,
-        "long_high_threshold": 60,
-        "long_strong_threshold": 80,
         "golden_cross_long_max": 20,
         "golden_cross_mid_max": 30,
         "lookback_days": 80,
@@ -88,7 +85,6 @@ class DeepVStrategy(BaseStrategy):
         df = df.tail(lookback).copy()
         closes = df["close"].astype(float).tolist()
         lows = df["low"].astype(float).tolist()
-        highs = df["high"].astype(float).tolist()
 
         # 1. 计算4条随机指标线
         short_line = self._line(closes, lows, n1)        # 短期 (白线)
@@ -96,7 +92,15 @@ class DeepVStrategy(BaseStrategy):
         mid_long_line = self._line(closes, lows, 20)      # 中长期 (紫线)
         long_line = self._line(closes, lows, n2)          # 长期 (红线)
 
-        # 2. 计算BBI
+        # 2. 深V命中门禁: 长期 >= 80 AND 短期 <= 20
+        last_short = self._last_valid(short_line)
+        last_long = self._last_valid(long_line)
+        if last_short is None or last_long is None:
+            return 0.0
+        if last_short > 20 or last_long < 80:
+            return 0.0
+
+        # 3. 计算BBI
         bbi_periods = p["bbi_periods"]
         mas = [self._ma(closes, per) for per in bbi_periods]
         bbi = []
@@ -104,18 +108,16 @@ class DeepVStrategy(BaseStrategy):
             vals = [m[i] for m in mas if m[i] is not None]
             bbi.append(sum(vals) / len(vals) if vals else None)
 
-        # 3. BBI趋势检测
-        last_close = closes[-1]
-        last_bbi = self._last_valid(bbi)
+        # 4. BBI趋势检测
         bbi_up = self._bbi_trend(bbi)
 
-        # 4. 四个买入信号评分
+        # 5. 四个买入信号评分
         signal_four_zero = self._signal_four_zero(short_line, mid_line, mid_long_line, long_line, p)
-        signal_deep_v = self._signal_deep_v(short_line, long_line, p)
+        signal_deep_v = self._signal_deep_v(last_short, last_long)
         signal_cross_red = self._signal_cross_red(short_line, long_line, p)
         signal_cross_yellow = self._signal_cross_yellow(short_line, mid_line, p)
 
-        # 5. 加权汇总
+        # 6. 加权汇总
         w = [p["four_zero_weight"], p["deep_v_weight"], p["cross_red_weight"], p["cross_yellow_weight"]]
         w_sum = sum(w)
         if w_sum > 0:
@@ -124,13 +126,8 @@ class DeepVStrategy(BaseStrategy):
         total = (signal_four_zero * w[0] + signal_deep_v * w[1]
                  + signal_cross_red * w[2] + signal_cross_yellow * w[3])
 
-        # 6. BBI趋势修正
+        # 7. BBI趋势修正 (适度扣分而非拦死)
         if not bbi_up:
-            total *= 0.3
-
-        # 7. 长期线强度修正
-        last_long = self._last_valid(long_line)
-        if last_long is not None and last_long < p["long_strong_threshold"]:
             total *= 0.5
 
         return round(min(max(total, 0), 100), 2)
@@ -159,20 +156,13 @@ class DeepVStrategy(BaseStrategy):
                 return 100.0
         return 0.0
 
-    def _signal_deep_v(self, short, long_line, p):
-        """白线下20 + 长期高位信号（核心深V信号）。"""
-        last_short = self._last_valid(short)
-        last_long = self._last_valid(long_line)
-        if last_short is None or last_long is None:
-            return 0.0
-        if last_short > p["short_low_threshold"]:
-            return 0.0
-        if last_long < p["long_high_threshold"]:
-            return 0.0
-        # 短期越低、长期越高 → 分越高
-        short_score = (1 - last_short / p["short_low_threshold"]) * 50
-        long_score = min((last_long - p["long_high_threshold"])
-                         / (100 - p["long_high_threshold"]) * 50, 50)
+    @staticmethod
+    def _signal_deep_v(last_short, last_long):
+        """深V核心评分: 短期越低分越高，长期越高分越高。门禁已在score()中处理。"""
+        # 短期: 0分(at 20) ~ 50分(at 0)
+        short_score = (1 - last_short / 20) * 50
+        # 长期: 0分(at 80) ~ 50分(at 100)
+        long_score = min((last_long - 80) / 20 * 50, 50)
         return min(short_score + long_score, 100)
 
     def _signal_cross_red(self, short, long_line, p):

@@ -45,11 +45,29 @@ def get_kline(
         else:
             mas[f"ma{period}"] = [None] * len(closes)
 
+    s = pd.Series(closes)
+
+    # 知行短期趋势线: EMA(EMA(C,10),10)
+    ema_double = s.ewm(span=10, adjust=False).mean().ewm(span=10, adjust=False).mean()
+    zhixng_short = [round(v, 2) if not pd.isna(v) else None for v in ema_double.tolist()]
+
+    # 知行多空线: (MA14 + MA28 + MA57 + MA114) / 4
+    ma14 = s.rolling(14).mean()
+    ma28 = s.rolling(28).mean()
+    ma57 = s.rolling(57).mean()
+    ma114 = s.rolling(114).mean()
+    zhixng_bb = []
+    for i in range(len(closes)):
+        vals = [m.iloc[i] for m in [ma14, ma28, ma57, ma114] if not pd.isna(m.iloc[i])]
+        zhixng_bb.append(round(sum(vals) / len(vals), 2) if vals else None)
+
     return {
         "code": code,
         "dates": dates,
         "ohlc": ohlc,
         "volumes": volumes,
+        "zhixng_short": zhixng_short,
+        "zhixng_bb": zhixng_bb,
         **mas,
     }
 

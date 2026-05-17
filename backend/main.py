@@ -35,6 +35,7 @@ from backend.api.scans import router as scans_router
 from backend.api.watchlist import router as watchlist_router
 from backend.api.notifications import router as notifications_router
 from backend.api.stats import router as stats_router
+from backend.api.slipped_fish import router as slipped_fish_router
 
 app.include_router(stocks_router)
 app.include_router(charts_router)
@@ -43,6 +44,7 @@ app.include_router(scans_router)
 app.include_router(watchlist_router)
 app.include_router(notifications_router)
 app.include_router(stats_router)
+app.include_router(slipped_fish_router)
 
 
 @app.get("/api/health")

@@ -7,9 +7,14 @@
       <router-link to="/watchlist">⭐ 自选追踪</router-link>
       <router-link to="/strategies">⚙️ 策略管理</router-link>
       <router-link to="/data">📋 数据汇总</router-link>
+      <router-link to="/slipped-fish">🎣 漏网之鱼</router-link>
     </nav>
     <main class="content">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <keep-alive>
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </main>
   </div>
 </template>

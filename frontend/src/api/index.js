@@ -27,6 +27,9 @@ export default {
   getBacktestList: (name) => api.get(`/strategies/${name}/backtest/history`),
   getBacktestDetail: (name, id) => api.get(`/strategies/${name}/backtest/${id}`),
 
+  // Slipped Fish
+  getSlippedFish: () => api.get('/slipped-fish/'),
+
   // Scans
   runScan: (strategyName) => api.post('/scans/run', null, { params: { strategy_name: strategyName || '' } }),
   getLatestRanking: (name, limit, offset) => api.get('/scans/latest', { params: { strategy_name: name, limit: limit || 50, offset: offset || 0 } }),

@@ -7,6 +7,7 @@ const routes = [
   { path: '/watchlist', name: 'Watchlist', component: () => import('../views/Watchlist.vue') },
   { path: '/strategies', name: 'Strategies', component: () => import('../views/Strategies.vue') },
   { path: '/data', name: 'DataSummary', component: () => import('../views/DataSummary.vue') },
+  { path: '/slipped-fish', name: 'SlippedFish', component: () => import('../views/SlippedFish.vue') },
 ]
 
 export default createRouter({
