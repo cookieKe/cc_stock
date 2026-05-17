@@ -14,6 +14,17 @@
             </span>
           </div>
         </div>
+        <div v-if="marketData.active_market_cap" class="index-panel">
+          <div :ref="el => sparkRefs[2] = el" class="sparkline"></div>
+          <div class="index-info">
+            <span class="index-label">{{ marketData.active_market_cap.name }}</span>
+            <span class="index-value">{{ marketData.active_market_cap.latest ?? '-' }}</span>
+            <span v-if="marketData.active_market_cap.change_pct != null"
+                  :class="marketData.active_market_cap.change_pct >= 0 ? 'positive' : 'negative'">
+              {{ marketData.active_market_cap.change_pct >= 0 ? '+' : '' }}{{ marketData.active_market_cap.change_pct }}%
+            </span>
+          </div>
+        </div>
       </div>
       <div class="overview-footer">
         <span class="cap-info" v-if="marketData.total_market_cap">
@@ -119,18 +130,21 @@ async function loadMarketOverview() {
         if (idx.dates && idx.dates.length) renderSparkline(i, idx)
       })
     }
+    // 活跃市值作为第3个面板
+    const amv = data.active_market_cap
+    if (amv && amv.dates && amv.dates.length) renderSparkline(2, amv)
   } catch { /* ignore */ }
 }
 
-function renderSparkline(i, index) {
+function renderSparkline(i, item) {
   const el = sparkRefs.value[i]
   if (!el) return
   if (sparkCharts[i]) sparkCharts[i].dispose()
   sparkCharts[i] = echarts.init(el)
 
-  const dates = index.dates
-  const closes = index.closes
-  const isUp = (index.change_pct ?? 0) >= 0
+  const dates = item.dates
+  const values = item.closes || item.values
+  const isUp = (item.change_pct ?? 0) >= 0
   const lineColor = isUp ? '#cf1322' : '#3f8600'
   const areaColor = isUp ? 'rgba(207,19,34,0.06)' : 'rgba(63,134,0,0.06)'
 
@@ -143,7 +157,7 @@ function renderSparkline(i, index) {
       splitLine: { lineStyle: { type: 'dashed', color: '#f0f0f0' } },
     },
     series: [{
-      type: 'line', data: closes, symbol: 'none',
+      type: 'line', data: values, symbol: 'none',
       lineStyle: { width: 1.5, color: lineColor },
       areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
         { offset: 0, color: areaColor },

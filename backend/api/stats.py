@@ -227,6 +227,9 @@ def _compute_market_overview(db: Session, latest_trade_date) -> dict:
     sh_index = _fetch_one_index(mgr, "000001", "上证指数", start_str, today_str)
     sz_index = _fetch_one_index(mgr, "399001", "深证成指", start_str, today_str)
 
+    # 活跃市值 OAMV ≈ SMA( Σ(open×amount)/10^7, 10 )
+    active_cap = _compute_oamv(db, latest_trade_date)
+
     # 总市值：从 financials 表取每只股票最新报告期的市值汇总
     total_cap = None
     try:
@@ -253,6 +256,73 @@ def _compute_market_overview(db: Session, latest_trade_date) -> dict:
 
     return {
         "indices": [sh_index, sz_index],
+        "active_market_cap": active_cap,
         "total_market_cap": total_cap,
         "trade_date": str(latest_trade_date) if latest_trade_date else None,
     }
+
+
+def _compute_oamv(db: Session, latest_trade_date) -> dict:
+    """活跃市值 OAMV: 近似模拟指南针活筹指数。
+
+    daily_raw = Σ(open × amount) / 10^7  (全A股按交易日汇总)
+    OAMV = SMA(daily_raw, 10)
+    """
+    result = {"name": "活跃市值(0AMV)", "latest": None, "change_pct": None,
+              "dates": [], "values": []}
+    if not latest_trade_date:
+        return result
+
+    start = latest_trade_date - timedelta(days=200)
+    rows = (
+        db.query(
+            MarketData.trade_date,
+            func.sum(MarketData.open * MarketData.amount).label("daily_sum"),
+        )
+        .filter(
+            MarketData.trade_date >= start,
+            MarketData.trade_date <= latest_trade_date,
+        )
+        .group_by(MarketData.trade_date)
+        .order_by(MarketData.trade_date)
+        .all()
+    )
+    if len(rows) < 10:
+        return result
+
+    raw = [round(float(r.daily_sum / 10_000_000), 2) if r.daily_sum else None for r in rows]
+    dates = [str(r.trade_date) for r in rows]
+
+    # 10日简单移动平均
+    oamv = []
+    for i in range(len(raw)):
+        if i < 9:
+            oamv.append(None)
+        else:
+            window = raw[i - 9:i + 1]
+            if all(v is not None for v in window):
+                oamv.append(round(sum(window) / 10, 2))
+            else:
+                oamv.append(None)
+
+    result["dates"] = dates
+    result["values"] = oamv
+    last_val = None
+    for v in reversed(oamv):
+        if v is not None:
+            last_val = v
+            break
+    if last_val is not None:
+        result["latest"] = last_val
+        # 找上一个有效值算涨跌
+        found = False
+        for v in reversed(oamv):
+            if v is not None:
+                if found:
+                    prev_val = v
+                    if prev_val != 0:
+                        result["change_pct"] = round((last_val - prev_val) / prev_val * 100, 2)
+                    break
+                found = True
+
+    return result
