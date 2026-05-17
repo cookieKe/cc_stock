@@ -7,6 +7,7 @@ export const useStockStore = defineStore('stock', {
     rankingsTotal: 0,
     rankingsOffset: 0,
     rankingsLimit: 50,
+    rankingsStrategy: '',
     scanDate: '',
     dataStatus: null,
     watchlist: null,
@@ -25,6 +26,7 @@ export const useStockStore = defineStore('stock', {
         this.rankings = []
         this.rankingsTotal = 0
       }
+      this.rankingsStrategy = strategyName || ''
       const res = await api.getLatestRanking(
         strategyName || '',
         this.rankingsLimit,
@@ -40,8 +42,9 @@ export const useStockStore = defineStore('stock', {
     },
     async loadMoreRankings(strategyName) {
       if (this.rankings.length >= this.rankingsTotal) return
+      const name = strategyName !== undefined ? (strategyName || '') : this.rankingsStrategy
       const res = await api.getLatestRanking(
-        strategyName || '',
+        name,
         this.rankingsLimit,
         this.rankingsOffset
       )

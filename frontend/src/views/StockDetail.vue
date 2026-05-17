@@ -50,12 +50,27 @@ const nextCode = computed(() => {
   return idx >= 0 && idx < navCodes.value.length - 1 ? navCodes.value[idx + 1] : null
 })
 
+const LOAD_AHEAD = 5  // 距离列表末尾少于这个数时自动加载更多
+
+async function ensureMore() {
+  const remaining = store.rankingsTotal - store.rankings.length
+  if (remaining > 0 && navCodes.value.length - currentIndex.value <= LOAD_AHEAD) {
+    await store.loadMoreRankings()  // 使用 store 记住的策略名
+  }
+}
+
 function goPrev() {
   if (prevCode.value) router.push(`/stock/${prevCode.value}`)
 }
 
-function goNext() {
-  if (nextCode.value) router.push(`/stock/${nextCode.value}`)
+async function goNext() {
+  await ensureMore()
+  // loadMore 后 nextCode 会更新
+  const codes = store.rankings.map(r => r.code)
+  const idx = codes.indexOf(route.params.code)
+  if (idx >= 0 && idx < codes.length - 1) {
+    router.push(`/stock/${codes[idx + 1]}`)
+  }
 }
 
 function onKeyDown(e) {
