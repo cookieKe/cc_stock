@@ -1,3 +1,7 @@
+import threading
+from datetime import date, timedelta, datetime, time
+
+import pandas as pd
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -11,9 +15,12 @@ from backend.models.watchlist import Watchlist
 from backend.models.backtest import Backtest
 from backend.models.notification import Notification
 from backend.models.strategy import Strategy
-from backend.services.data_sync import get_last_trade_date
+from backend.services.data_sync import get_last_trade_date, get_source_manager
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
+
+_market_cache = {"data": None, "trade_date": None, "cache_until": None}
+_market_cache_lock = threading.Lock()
 
 
 @router.get("/data-status")
@@ -143,4 +150,92 @@ def get_data_summary(db: Session = Depends(get_db)):
             "total": notif_count,
             "unread": unread,
         },
+    }
+
+
+def _find_next_trade_date(db: Session, current: date) -> date:
+    next_date = (
+        db.query(func.min(MarketData.trade_date))
+        .filter(MarketData.trade_date > current)
+        .scalar()
+    )
+    if next_date:
+        return next_date
+    d = current + timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def _in_cache_window(now: datetime, trade_date: date, cache_until: datetime) -> bool:
+    start = datetime.combine(trade_date, time(16, 0))
+    return start <= now <= cache_until
+
+
+@router.get("/market-overview")
+def get_market_overview(db: Session = Depends(get_db)):
+    """A股整体趋势 + 活跃市值。缓存窗口: [交易日16:00, 下一交易日09:00]。"""
+    now = datetime.now()
+    latest_trade_date = db.query(func.max(MarketData.trade_date)).scalar()
+
+    with _market_cache_lock:
+        if (_market_cache["data"] is not None
+                and _market_cache["trade_date"] == latest_trade_date
+                and _market_cache["cache_until"] is not None):
+            if _in_cache_window(now, _market_cache["trade_date"], _market_cache["cache_until"]):
+                resp = dict(_market_cache["data"])
+                resp["cached"] = True
+                return resp
+
+    data = _compute_market_overview(latest_trade_date)
+
+    if latest_trade_date:
+        cache_until = datetime.combine(
+            _find_next_trade_date(db, latest_trade_date), time(9, 0)
+        )
+        with _market_cache_lock:
+            _market_cache["data"] = data
+            _market_cache["trade_date"] = latest_trade_date
+            _market_cache["cache_until"] = cache_until
+
+    data["cached"] = False
+    return data
+
+
+def _compute_market_overview(latest_trade_date) -> dict:
+    mgr = get_source_manager()
+    today_str = str(date.today())
+    start_str = str(date.today() - timedelta(days=180))
+
+    # 上证指数
+    index_info = {"name": "上证指数", "code": "000001", "latest": None, "change_pct": None,
+                   "dates": [], "closes": []}
+    try:
+        df, _ = mgr.fetch_index_kline("000001", start_str, today_str)
+        if not df.empty and len(df) >= 2:
+            index_info["dates"] = [str(d) for d in df["date"].tolist()]
+            closes = df["close"].tolist()
+            index_info["closes"] = [round(float(c), 2) for c in closes]
+            index_info["latest"] = round(float(closes[-1]), 2)
+            prev = float(closes[-2])
+            if prev > 0:
+                index_info["change_pct"] = round((float(closes[-1]) - prev) / prev * 100, 2)
+    except Exception:
+        pass
+
+    # 总市值（从 akshare 实时行情汇总）
+    total_cap = None
+    try:
+        import akshare as ak
+        spot = ak.stock_zh_a_spot()
+        if "总市值" in spot.columns and not spot.empty:
+            cap_series = pd.to_numeric(spot["总市值"], errors="coerce")
+            total_cap = int(cap_series.sum())
+    except Exception:
+        pass
+
+    return {
+        "index": index_info,
+        "total_market_cap": total_cap,
+        "trade_date": str(latest_trade_date) if latest_trade_date else None,
     }

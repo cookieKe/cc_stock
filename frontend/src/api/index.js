@@ -35,6 +35,7 @@ export default {
   runScan: (strategyName) => api.post('/scans/run', null, { params: { strategy_name: strategyName || '' } }),
   getLatestRanking: (name, limit, offset) => api.get('/scans/latest', { params: { strategy_name: name, limit: limit || 50, offset: offset || 0 } }),
   getDataStatus: () => api.get('/stats/data-status'),
+  getMarketOverview: () => api.get('/stats/market-overview'),
   getScanHistory: (code, days) => api.get(`/scans/history/${code}`, { params: { days } }),
 
   // Watchlist
