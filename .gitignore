@@ -33,3 +33,6 @@ Thumbs.db
 
 # Logs
 log/
+
+# Strategy documentation (IP)
+strategy_frame20.md

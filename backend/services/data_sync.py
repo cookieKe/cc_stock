@@ -302,10 +302,10 @@ def sync_daily_kline(
     to_fetch = []
     for c in codes:
         last, count = stock_status.get(c, (None, 0))
-        if last and last >= today - timedelta(days=1) and count >= min_records:
+        if last and last >= today and count >= min_records:
             skipped += 1
         else:
-            if last and last > today - timedelta(days=days_back) and last < today - timedelta(days=1):
+            if last and last > today - timedelta(days=days_back) and last < today:
                 # Partial data within range but not current — continue from last date
                 actual_start = (last + timedelta(days=1)).strftime("%Y%m%d")
             else:

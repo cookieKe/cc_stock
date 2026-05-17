@@ -40,7 +40,8 @@ class TushareSource(DataSource):
             "trade_date": "date", "open": "open", "high": "high",
             "low": "low", "close": "close", "vol": "volume", "amount": "amount",
         })
-        df["volume"] = df["volume"] * 100  # Tushare vol is in 手 (100 shares)
+        df["volume"] = df["volume"] * 100    # Tushare vol: 手 → 股
+        df["amount"] = df["amount"] * 1000    # Tushare amount: 千元 → 元
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d").dt.date
         df["turnover"] = None
         return df[["date", "open", "high", "low", "close", "volume", "amount", "turnover"]]
@@ -103,7 +104,8 @@ class TushareSource(DataSource):
                 "trade_date": "date", "open": "open", "high": "high",
                 "low": "low", "close": "close", "vol": "volume", "amount": "amount",
             })
-            df["volume"] = df["volume"] * 100  # Tushare vol is in 手 (100 shares)
+            df["volume"] = df["volume"] * 100    # Tushare vol: 手 → 股
+            df["amount"] = df["amount"] * 1000    # Tushare amount: 千元 → 元
             df["date"] = pd.to_datetime(df["date"], format="%Y%m%d").dt.date
             df["code"] = df["ts_code"].str.replace(".SH", "").str.replace(".SZ", "").str.replace(".BJ", "")
             df["turnover"] = None

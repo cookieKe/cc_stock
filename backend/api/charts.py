@@ -101,6 +101,61 @@ def _calc_kdj(highs, lows, closes, n=9):
     return k, d, j
 
 
+@router.get("/deep_v/{code}")
+def get_deep_v(code: str, days: int = 120, db: Session = Depends(get_db)):
+    """返回深V策略4条随机指标线 + BBI"""
+    rows = (
+        db.query(MarketData)
+        .filter(MarketData.stock_code == code)
+        .order_by(MarketData.trade_date.asc())
+        .all()
+    )[-days:]
+
+    n1, n2 = 3, 21
+    if len(rows) < max(n1, n2) + 5:
+        return {"error": "数据不足"}
+
+    closes = [r.close for r in rows]
+    lows = [r.low for r in rows]
+
+    def calc_line(n):
+        result = [None] * len(closes)
+        for i in range(n - 1, len(closes)):
+            wc = closes[i - n + 1:i + 1]
+            wl = lows[i - n + 1:i + 1]
+            hh = max(wc)
+            ll = min(wl)
+            denom = hh - ll
+            result[i] = round((closes[i] - ll) / (denom + 1e-9) * 100, 2) if denom > 0 else 50.0
+        return result
+
+    short_line = calc_line(n1)
+    mid_line = calc_line(10)
+    mid_long_line = calc_line(20)
+    long_line = calc_line(n2)
+
+    # BBI = (MA3 + MA6 + MA12 + MA24) / 4
+    s = pd.Series(closes)
+    ma3 = s.rolling(3).mean().tolist()
+    ma6 = s.rolling(6).mean().tolist()
+    ma12 = s.rolling(12).mean().tolist()
+    ma24 = s.rolling(24).mean().tolist()
+    bbi = []
+    for i in range(len(closes)):
+        vals = [m[i] for m in [ma3, ma6, ma12, ma24] if not pd.isna(m[i])]
+        bbi.append(round(sum(vals) / len(vals), 2) if vals else None)
+
+    return {
+        "code": code,
+        "dates": [str(r.trade_date) for r in rows],
+        "short_line": short_line,
+        "mid_line": mid_line,
+        "mid_long_line": mid_long_line,
+        "long_line": long_line,
+        "bbi": bbi,
+    }
+
+
 @router.get("/volume/{code}")
 def get_volume_chart(code: str, days: int = 120, db: Session = Depends(get_db)):
     rows = (

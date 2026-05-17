@@ -15,6 +15,7 @@ export default {
   // Charts
   getKline: (code, days) => api.get(`/charts/kline/${code}`, { params: { days } }),
   getKDJ: (code, days) => api.get(`/charts/kdj/${code}`, { params: { days } }),
+  getDeepV: (code, days) => api.get(`/charts/deep_v/${code}`, { params: { days } }),
   getVolume: (code, days) => api.get(`/charts/volume/${code}`, { params: { days } }),
 
   // Strategies
