@@ -1,4 +1,5 @@
-from datetime import date, timedelta
+import threading
+from datetime import date, timedelta, datetime, time
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -19,9 +20,36 @@ J_THRESHOLD = 13
 PRICE_CHANGE_MIN = 5.0
 SCORE_MAX = 80.0
 
+_cache = {"data": None, "trade_date": None, "cache_until": None}
+_cache_lock = threading.Lock()
 
-@router.get("/")
-def get_slipped_fish(db: Session = Depends(get_db)):
+
+def _find_next_trade_date(db: Session, current: date) -> date:
+    next_date = (
+        db.query(func.min(MarketData.trade_date))
+        .filter(MarketData.trade_date > current)
+        .scalar()
+    )
+    if next_date:
+        return next_date
+    d = current + timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def _compute_cache_until(db: Session, trade_date: date) -> datetime:
+    next_td = _find_next_trade_date(db, trade_date)
+    return datetime.combine(next_td, time(9, 0))
+
+
+def _in_cache_window(now: datetime, trade_date: date, cache_until: datetime) -> bool:
+    start = datetime.combine(trade_date, time(16, 0))
+    return start <= now <= cache_until
+
+
+def _compute_items(db: Session) -> dict:
+    """Run the full slipped-fish query. Factored out so cache hit can skip it."""
     latest_trade_date = db.query(func.max(MarketData.trade_date)).scalar()
     if not latest_trade_date:
         return {"count": 0, "items": [], "scan_date": None, "trade_date": None}
@@ -48,7 +76,6 @@ def get_slipped_fish(db: Session = Depends(get_db)):
         .all()
     )
 
-    # Bulk-fetch latest scan scores: max weighted_score per stock
     latest_scan_date = db.query(func.max(ScanResult.scan_date)).scalar()
     score_map = {}
     if latest_scan_date:
@@ -126,3 +153,42 @@ def get_slipped_fish(db: Session = Depends(get_db)):
         "trade_date": str(latest_trade_date),
         "items": results,
     }
+
+
+@router.get("/")
+def get_slipped_fish(db: Session = Depends(get_db)):
+    now = datetime.now()
+
+    latest_trade_date = db.query(func.max(MarketData.trade_date)).scalar()
+
+    with _cache_lock:
+        cached = _cache["data"]
+        cached_td = _cache["trade_date"]
+        cached_until = _cache["cache_until"]
+    if cached is not None and cached_td == latest_trade_date and cached_until is not None:
+        if _in_cache_window(now, cached_td, cached_until):
+            resp = dict(cached)
+            resp["cached"] = True
+            resp["cache_until"] = cached_until.isoformat()
+            return resp
+
+    data = _compute_items(db)
+
+    if latest_trade_date:
+        cache_until = _compute_cache_until(db, latest_trade_date)
+        with _cache_lock:
+            _cache["data"] = data
+            _cache["trade_date"] = latest_trade_date
+            _cache["cache_until"] = cache_until
+        data["cache_until"] = cache_until.isoformat()
+    data["cached"] = False
+    return data
+
+
+@router.delete("/cache")
+def clear_slipped_fish_cache():
+    with _cache_lock:
+        _cache["data"] = None
+        _cache["trade_date"] = None
+        _cache["cache_until"] = None
+    return {"ok": True, "message": "缓存已清除"}

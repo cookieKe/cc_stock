@@ -29,6 +29,7 @@ export default {
 
   // Slipped Fish
   getSlippedFish: () => api.get('/slipped-fish/'),
+  clearSlippedFishCache: () => api.delete('/slipped-fish/cache'),
 
   // Scans
   runScan: (strategyName) => api.post('/scans/run', null, { params: { strategy_name: strategyName || '' } }),

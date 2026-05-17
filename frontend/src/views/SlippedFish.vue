@@ -12,8 +12,13 @@
       <span v-if="tradeDate" style="color:#888; font-size:13px">
         数据日期: {{ tradeDate }}
         <template v-if="scanDate"> | 扫描日期: {{ scanDate }}</template>
+        <template v-if="cached">
+          | <span style="color:#52c41a; font-weight:600">已缓存</span>
+          (至 {{ cacheUntil }})
+        </template>
       </span>
       <span v-if="sortedItems.length" style="color:#888; font-size:13px">共 {{ sortedItems.length }} 只</span>
+      <button v-if="cached" class="btn btn-default btn-sm" @click="clearCache" style="margin-left:auto">清除缓存</button>
     </div>
 
     <div v-if="error" class="card" style="background:#fff1f0; border:1px solid #ffa39e; margin-bottom:12px">
@@ -63,6 +68,8 @@ const loading = ref(false)
 const error = ref('')
 const scanDate = ref('')
 const tradeDate = ref('')
+const cached = ref(false)
+const cacheUntil = ref('')
 const sortKey = ref('')
 const sortDir = ref('asc')
 
@@ -105,6 +112,8 @@ async function loadData() {
     items.value = data.items || []
     scanDate.value = data.scan_date || ''
     tradeDate.value = data.trade_date || ''
+    cached.value = !!data.cached
+    cacheUntil.value = data.cache_until ? data.cache_until.replace('T', ' ') : ''
   } catch (e) {
     error.value = '加载失败: ' + (e.response?.data?.detail || e.message)
   } finally {
@@ -118,6 +127,17 @@ async function addWatch(code) {
     alert('已添加到追踪列表')
   } catch (e) {
     alert('添加失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+async function clearCache() {
+  try {
+    await api.clearSlippedFishCache()
+    cached.value = false
+    cacheUntil.value = ''
+    await loadData()
+  } catch (e) {
+    alert('清除缓存失败: ' + (e.response?.data?.detail || e.message))
   }
 }
 
