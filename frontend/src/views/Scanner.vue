@@ -3,23 +3,24 @@
     <h2>市场扫描</h2>
 
     <div class="card market-overview" v-if="marketData">
-      <div class="overview-left">
-        <div ref="sparkRef" class="sparkline"></div>
+      <div class="overview-charts">
+        <div v-for="(idx, i) in marketData.indices" :key="idx.code" class="index-panel">
+          <div :ref="el => sparkRefs[i] = el" class="sparkline"></div>
+          <div class="index-info">
+            <span class="index-label">{{ idx.name }}</span>
+            <span class="index-value">{{ idx.latest ?? '-' }}</span>
+            <span v-if="idx.change_pct != null" :class="idx.change_pct >= 0 ? 'positive' : 'negative'">
+              {{ idx.change_pct >= 0 ? '+' : '' }}{{ idx.change_pct }}%
+            </span>
+          </div>
+        </div>
       </div>
-      <div class="overview-right">
-        <div class="index-info">
-          <span class="index-label">{{ marketData.index.name }}</span>
-          <span class="index-value">{{ marketData.index.latest }}</span>
-          <span :class="marketData.index.change_pct >= 0 ? 'positive' : 'negative'">
-            {{ marketData.index.change_pct >= 0 ? '+' : '' }}{{ marketData.index.change_pct }}%
-          </span>
-        </div>
-        <div class="cap-info" v-if="marketData.total_market_cap">
+      <div class="overview-footer">
+        <span class="cap-info" v-if="marketData.total_market_cap">
           总市值 {{ formatCap(marketData.total_market_cap) }}
-        </div>
-        <div class="cache-hint" v-if="marketData.cached">
-          已缓存 · {{ marketData.trade_date }}
-        </div>
+        </span>
+        <span class="cap-info" v-else style="color:#ccc">总市值数据获取中...</span>
+        <span class="cache-hint" v-if="marketData.cached">已缓存 · {{ marketData.trade_date }}</span>
       </div>
     </div>
 
@@ -72,9 +73,9 @@ const store = useStockStore()
 const strategyFilter = ref('')
 const loadingMore = ref(false)
 const scrollContainer = ref(null)
-const sparkRef = ref(null)
+const sparkRefs = ref([])
 const marketData = ref(null)
-let sparkChart = null
+const sparkCharts = []
 
 async function loadRankings() {
   await store.fetchRankings(strategyFilter.value, true)
@@ -113,27 +114,34 @@ async function loadMarketOverview() {
     const { data } = await api.getMarketOverview()
     marketData.value = data
     await nextTick()
-    if (data.index && data.index.dates && data.index.dates.length) {
-      renderSparkline(data.index)
+    if (data.indices) {
+      data.indices.forEach((idx, i) => {
+        if (idx.dates && idx.dates.length) renderSparkline(i, idx)
+      })
     }
   } catch { /* ignore */ }
 }
 
-function renderSparkline(index) {
-  if (!sparkRef.value) return
-  if (sparkChart) sparkChart.dispose()
-  sparkChart = echarts.init(sparkRef.value)
+function renderSparkline(i, index) {
+  const el = sparkRefs.value[i]
+  if (!el) return
+  if (sparkCharts[i]) sparkCharts[i].dispose()
+  sparkCharts[i] = echarts.init(el)
 
   const dates = index.dates
   const closes = index.closes
-  const isUp = index.change_pct >= 0
+  const isUp = (index.change_pct ?? 0) >= 0
   const lineColor = isUp ? '#cf1322' : '#3f8600'
-  const areaColor = isUp ? 'rgba(207,19,34,0.08)' : 'rgba(63,134,0,0.08)'
+  const areaColor = isUp ? 'rgba(207,19,34,0.06)' : 'rgba(63,134,0,0.06)'
 
-  sparkChart.setOption({
-    grid: { left: 0, right: 0, top: 4, bottom: 0 },
+  sparkCharts[i].setOption({
+    grid: { left: 0, right: 42, top: 6, bottom: 0 },
     xAxis: { type: 'category', data: dates, show: false },
-    yAxis: { type: 'value', show: false, scale: true },
+    yAxis: {
+      type: 'value', scale: true, splitNumber: 3,
+      axisLabel: { fontSize: 9, color: '#999', formatter: v => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v },
+      splitLine: { lineStyle: { type: 'dashed', color: '#f0f0f0' } },
+    },
     series: [{
       type: 'line', data: closes, symbol: 'none',
       lineStyle: { width: 1.5, color: lineColor },
@@ -152,48 +160,55 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (sparkChart) sparkChart.dispose()
+  sparkCharts.forEach(c => c.dispose())
 })
 </script>
 
 <style scoped>
 .market-overview {
-  display: flex;
-  align-items: center;
-  gap: 20px;
   padding: 12px 16px;
   margin-bottom: 12px;
 }
 
-.overview-left {
-  flex-shrink: 0;
+.overview-charts {
+  display: flex;
+  gap: 32px;
+}
+
+.index-panel {
+  flex: 1;
+  min-width: 0;
 }
 
 .sparkline {
-  width: 320px;
+  width: 100%;
   height: 80px;
-}
-
-.overview-right {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .index-info {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .index-label {
-  font-size: 13px;
+  font-size: 12px;
   color: #888;
 }
 
 .index-value {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
+}
+
+.overview-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
 }
 
 .cap-info {
@@ -207,13 +222,13 @@ onBeforeUnmount(() => {
 }
 
 .positive {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: #cf1322;
 }
 
 .negative {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: #3f8600;
 }

@@ -1,7 +1,6 @@
 import threading
 from datetime import date, timedelta, datetime, time
 
-import pandas as pd
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -187,7 +186,7 @@ def get_market_overview(db: Session = Depends(get_db)):
                 resp["cached"] = True
                 return resp
 
-    data = _compute_market_overview(latest_trade_date)
+    data = _compute_market_overview(db, latest_trade_date)
 
     if latest_trade_date:
         cache_until = datetime.combine(
@@ -202,40 +201,58 @@ def get_market_overview(db: Session = Depends(get_db)):
     return data
 
 
-def _compute_market_overview(latest_trade_date) -> dict:
+def _fetch_one_index(mgr, symbol: str, name: str, start_str: str, end_str: str) -> dict:
+    info = {"name": name, "code": symbol, "latest": None, "change_pct": None,
+            "dates": [], "closes": []}
+    try:
+        df, _ = mgr.fetch_index_kline(symbol, start_str, end_str)
+        if not df.empty and len(df) >= 2:
+            info["dates"] = [str(d) for d in df["date"].tolist()]
+            closes = df["close"].tolist()
+            info["closes"] = [round(float(c), 2) for c in closes]
+            info["latest"] = round(float(closes[-1]), 2)
+            prev = float(closes[-2])
+            if prev > 0:
+                info["change_pct"] = round((float(closes[-1]) - prev) / prev * 100, 2)
+    except Exception:
+        pass
+    return info
+
+
+def _compute_market_overview(db: Session, latest_trade_date) -> dict:
     mgr = get_source_manager()
     today_str = str(date.today())
     start_str = str(date.today() - timedelta(days=180))
 
-    # 上证指数
-    index_info = {"name": "上证指数", "code": "000001", "latest": None, "change_pct": None,
-                   "dates": [], "closes": []}
-    try:
-        df, _ = mgr.fetch_index_kline("000001", start_str, today_str)
-        if not df.empty and len(df) >= 2:
-            index_info["dates"] = [str(d) for d in df["date"].tolist()]
-            closes = df["close"].tolist()
-            index_info["closes"] = [round(float(c), 2) for c in closes]
-            index_info["latest"] = round(float(closes[-1]), 2)
-            prev = float(closes[-2])
-            if prev > 0:
-                index_info["change_pct"] = round((float(closes[-1]) - prev) / prev * 100, 2)
-    except Exception:
-        pass
+    sh_index = _fetch_one_index(mgr, "000001", "上证指数", start_str, today_str)
+    sz_index = _fetch_one_index(mgr, "399001", "深证成指", start_str, today_str)
 
-    # 总市值（从 akshare 实时行情汇总）
+    # 总市值：从 financials 表取每只股票最新报告期的市值汇总
     total_cap = None
     try:
-        import akshare as ak
-        spot = ak.stock_zh_a_spot()
-        if "总市值" in spot.columns and not spot.empty:
-            cap_series = pd.to_numeric(spot["总市值"], errors="coerce")
-            total_cap = int(cap_series.sum())
+        from sqlalchemy import func as sql_func
+        sub = (
+            db.query(
+                Financials.stock_code,
+                sql_func.max(Financials.report_date).label("max_date"),
+            )
+            .filter(Financials.market_cap.isnot(None))
+            .group_by(Financials.stock_code)
+            .subquery()
+        )
+        cap_sum = (
+            db.query(sql_func.sum(Financials.market_cap))
+            .join(sub, (Financials.stock_code == sub.c.stock_code)
+                  & (Financials.report_date == sub.c.max_date))
+            .scalar()
+        )
+        if cap_sum:
+            total_cap = int(cap_sum)
     except Exception:
         pass
 
     return {
-        "index": index_info,
+        "indices": [sh_index, sz_index],
         "total_market_cap": total_cap,
         "trade_date": str(latest_trade_date) if latest_trade_date else None,
     }
