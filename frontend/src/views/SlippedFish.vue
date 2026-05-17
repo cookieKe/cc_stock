@@ -123,7 +123,7 @@ async function loadData() {
 
 async function addWatch(code) {
   try {
-    await api.addToWatchlist(code)
+    await api.addToWatchlist(code, '', '漏网之鱼')
     alert('已添加到追踪列表')
   } catch (e) {
     alert('添加失败: ' + (e.response?.data?.detail || e.message))

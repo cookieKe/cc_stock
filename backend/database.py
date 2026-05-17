@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from backend.config import settings
@@ -26,3 +26,12 @@ def get_db():
 def init_db():
     from backend.models import stock, market_data, financials, strategy, scan_result, watchlist, backtest, notification  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    # 迁移: watchlist 新增 source 列
+    try:
+        with engine.begin() as conn:
+            if "sqlite" in settings.database_url:
+                conn.execute(text("ALTER TABLE watchlist ADD COLUMN source VARCHAR(50) DEFAULT '手动'"))
+            else:
+                conn.execute(text("ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT '手动'"))
+    except Exception:
+        pass

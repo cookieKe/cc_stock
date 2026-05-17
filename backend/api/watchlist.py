@@ -21,7 +21,8 @@ def add_stock(data: dict, db: Session = Depends(get_db)):
     if not code:
         return {"error": "股票代码不能为空"}
     notes = data.get("notes", "")
-    wl = add_to_watchlist(db, code, notes)
+    source = data.get("source", "手动")
+    wl = add_to_watchlist(db, code, notes, source)
     if not wl.stock_code:
         return {"error": "股票不存在"}
     return {

@@ -337,7 +337,7 @@ function renderChart(kline, kdj, vol, deepV) {
 }
 
 async function addWatch() {
-  await api.addToWatchlist(route.params.code)
+  await api.addToWatchlist(route.params.code, '', '手动')
 }
 </script>
 

@@ -10,8 +10,8 @@ from backend.models.stock import Stock
 from backend.data_sources.akshare_source import AkshareSource
 
 
-def add_to_watchlist(db: Session, code: str, notes: str = "") -> Watchlist:
-    """添加股票到追踪列表，记录加入时价格。"""
+def add_to_watchlist(db: Session, code: str, notes: str = "", source: str = "手动") -> Watchlist:
+    """添加股票到追踪列表，记录加入时价格及来源。"""
     existing = db.query(Watchlist).filter(
         Watchlist.stock_code == code, Watchlist.is_active == True  # noqa: E712
     ).first()
@@ -46,6 +46,7 @@ def add_to_watchlist(db: Session, code: str, notes: str = "") -> Watchlist:
         highest_price=added_price,
         lowest_price=added_price,
         notes=notes,
+        source=source,
     )
     db.add(wl)
     db.commit()
@@ -128,6 +129,7 @@ def get_watchlist_stats(db: Session) -> dict:
                 "holding_days": wl.holding_days,
                 "highest_price": wl.highest_price,
                 "lowest_price": wl.lowest_price,
+                "source": wl.source or "手动",
             }
             for wl in items
         ],

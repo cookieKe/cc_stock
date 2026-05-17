@@ -18,5 +18,6 @@ class Watchlist(Base):
     lowest_price = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
     notes = Column(String(500), default="")
+    source = Column(String(50), default="手动")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

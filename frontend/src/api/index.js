@@ -40,7 +40,7 @@ export default {
 
   // Watchlist
   getWatchlist: () => api.get('/watchlist/'),
-  addToWatchlist: (code, notes) => api.post('/watchlist/', { code, notes }),
+  addToWatchlist: (code, notes, source) => api.post('/watchlist/', { code, notes, source: source || '手动' }),
   removeFromWatchlist: (id) => api.delete(`/watchlist/${id}`),
   updatePrices: () => api.post('/watchlist/update-prices'),
   getBenchmark: () => api.get('/watchlist/benchmark'),

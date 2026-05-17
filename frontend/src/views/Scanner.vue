@@ -99,7 +99,8 @@ async function runScan() {
   await loadRankings()
 }
 async function addWatch(code) {
-  await api.addToWatchlist(code)
+  const src = strategyFilter.value || '全市场扫描'
+  await api.addToWatchlist(code, '', src)
 }
 function formatCap(n) {
   if (!n) return '-'

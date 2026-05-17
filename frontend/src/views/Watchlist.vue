@@ -39,12 +39,13 @@
       <h3>追踪列表</h3>
       <table>
         <thead>
-          <tr><th>代码</th><th>名称</th><th>加入日期</th><th>加入价</th><th>最新价</th><th>累计收益</th><th>持有天数</th><th>最高价</th><th>最低价</th><th>操作</th></tr>
+          <tr><th>代码</th><th>名称</th><th>来源</th><th>加入日期</th><th>加入价</th><th>最新价</th><th>累计收益</th><th>持有天数</th><th>最高价</th><th>最低价</th><th>操作</th></tr>
         </thead>
         <tbody>
           <tr v-for="item in items" :key="item.code">
             <td>{{ item.code }}</td>
             <td><router-link :to="`/stock/${item.code}`">{{ item.name }}</router-link></td>
+            <td><span :style="item.source === '手动' ? 'color:#888' : 'color:#1890ff;font-weight:500'">{{ item.source }}</span></td>
             <td>{{ item.added_date }}</td>
             <td>{{ item.added_price }}</td>
             <td>{{ item.latest_price }}</td>
