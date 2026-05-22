@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from backend.strategy_engine.base import BaseStrategy
+from backend.strategy_engine.trend_analyzer import TrendAnalyzer
 
 
 class TrendStrategy(BaseStrategy):
@@ -53,4 +54,18 @@ class TrendStrategy(BaseStrategy):
         trend_strength = min(max(price_vs_ma * 200 + 10, 0), 15)
 
         total = alignment_score + macd_score + trend_strength
+
+        # TrendAnalyzer confirmation: downgrade if trend structure is weak
+        ta = TrendAnalyzer(threshold=0.05)
+        ta_result = ta.analyze(df, lookback=60)
+        trend_direction = ta_result['trend']
+
+        if trend_direction in ('strong_down', 'slow_down'):
+            return 0.0  # downtrend — no matter what MA says
+
+        if trend_direction == 'strong_up':
+            total = min(total + 10, 100)  # bonus for strong uptrend
+        elif trend_direction == 'sideways':
+            total = total * 0.6  # penalty for unclear trend
+
         return round(min(max(total, 0), 100), 2)
