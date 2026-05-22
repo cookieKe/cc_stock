@@ -302,9 +302,12 @@ class KDJReversalV2Strategy(BaseStrategy):
                 subsequent_trough = t
                 break
         if subsequent_trough is None:
-            return 50.0
+            # 尚未确认谷底 → 分析 peak 至今的下跌段
+            ti = len(tail) - 1
+        else:
+            ti = subsequent_trough["index"]
 
-        pi, ti = last_peak["index"], subsequent_trough["index"]
+        pi = last_peak["index"]
         if ti - pi < 2:
             return 50.0
 
