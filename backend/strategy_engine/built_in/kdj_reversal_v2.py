@@ -315,8 +315,8 @@ class KDJReversalV2Strategy(BaseStrategy):
         if avg_decline_vol < 1e-9:
             return True
 
-        # 峰值量须为整个下跌段的最大量(不允许后续某天量更大)
-        if peak_vol <= max_decline_vol:
+        # 峰值量须 ≥ 下跌段任意单日量的95%(允许次日微幅超量)
+        if peak_vol < max_decline_vol * 0.95:
             return False
         # 峰值量须至少比下跌均量高5%
         return peak_vol / avg_decline_vol >= 1.05
