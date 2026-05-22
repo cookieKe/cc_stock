@@ -95,7 +95,7 @@ class KDJReversalV2Strategy(BaseStrategy):
             return 0.0
 
         # ── 1. J oversold ──
-        j_score = min((1 - j_last / p["j_threshold"]) * 100, 100)
+        j_score = min(np.sqrt(max(1 - j_last / p["j_threshold"], 0)) * 100, 100)
 
         # ── 2. Trend (TrendAnalyzer) ──
         trend_score = self._trend_analyzer_score(df, p)
