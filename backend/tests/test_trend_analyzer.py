@@ -80,8 +80,8 @@ class TestTurningPoints:
 
     def test_scan_from_newest_consistent(self):
         """Adding older data should not change the most recent turning points."""
-        # Recent data with clear pattern
-        recent = [100, 108, 92, 105]  # up 8%, down 15%, up 14% -- 2 turning points in recent
+        # Recent data with clear pattern (at least 5 points to avoid early return)
+        recent = [100, 108, 92, 105, 103, 110]  # up 8%, down 15%, up 14%, down 2%, up 7%
         older = [95, 102, 98, 103, 97]  # older noisy data
         df_recent = make_df(recent, start_date=datetime(2026, 1, 20))
         df_full = make_df(older + recent)
