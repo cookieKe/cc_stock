@@ -20,11 +20,6 @@ class KDJReversalV2Strategy(BaseStrategy):
         # J oversold
         "j_weight": 0.25,
 
-        # Divergence
-        "divergence_weight": 0.20,
-        "divergence_j_max": 20,
-        "divergence_lookback": 60,
-
         # Trend (TrendAnalyzer)
         "trend_weight": 0.15,
 
@@ -74,7 +69,7 @@ class KDJReversalV2Strategy(BaseStrategy):
     def get_required_data(self) -> dict:
         p = self.parameters
         days = max(p["kdj_n"], p["lookback_days"], p["pattern_lookback"],
-                   p["divergence_lookback"], p["magnitude_lookback"], 120)
+                   p["magnitude_lookback"], 120)
         return {"kline_days": days + 10}
 
     # ── main scorer ──────────────────────────────────────────────
@@ -108,10 +103,7 @@ class KDJReversalV2Strategy(BaseStrategy):
         # ── 1. J oversold ──
         j_score = min((1 - j_last / p["j_threshold"]) * 100, 100)
 
-        # ── 2. Divergence ──
-        div_score = self._divergence_score(closes, j, p)
-
-        # ── 3. Trend (TrendAnalyzer) ──
+        # ── 2. Trend (TrendAnalyzer) ──
         trend_score = self._trend_analyzer_score(df, p)
 
         # ── 4. Pattern (data templates) ──
@@ -124,18 +116,16 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         # ── Weighted sum ──
         w_map = {
-            "j": p["j_weight"], "div": p["divergence_weight"],
-            "trend": p["trend_weight"], "pat": p["pattern_weight"],
-            "vol": p["volume_weight"],
+            "j": p["j_weight"], "trend": p["trend_weight"],
+            "pat": p["pattern_weight"], "vol": p["volume_weight"],
         }
         w_sum = sum(w_map.values())
         if w_sum > 0:
             for k_w in w_map:
                 w_map[k_w] /= w_sum
 
-        total = (j_score * w_map["j"] + div_score * w_map["div"]
-                 + trend_score * w_map["trend"] + pattern_score * w_map["pat"]
-                 + vol_score * w_map["vol"])
+        total = (j_score * w_map["j"] + trend_score * w_map["trend"]
+                 + pattern_score * w_map["pat"] + vol_score * w_map["vol"])
 
         # ── 6. Magnitude multiplier ──
         mag = self._magnitude_factor(df, p)
@@ -146,46 +136,7 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         return round(min(max(total, 0), 100), 2)
 
-    # ── 1. J oversold (unchanged from V1) ────────────────────────
-
-    # ── 2. KDJ bottom divergence ─────────────────────────────────
-
-    def _divergence_score(self, closes: list, j_vals: list, p: dict) -> float:
-        """检测KDJ底背离: 价格新低但J值反而抬高。"""
-        dlookback = p["divergence_lookback"]
-        j_max = p["divergence_j_max"]
-
-        closes_arr = np.array(closes[-dlookback:], dtype=float)
-        j_arr = np.array(j_vals[-dlookback:], dtype=float)
-
-        # Find troughs in J: local minima below j_max
-        j_troughs = []  # list of (index, j_value, close)
-        for i in range(1, len(j_arr) - 1):
-            if j_arr[i] is not None and not np.isnan(j_arr[i]):
-                if j_arr[i] <= j_max and j_arr[i] <= j_arr[i - 1] and j_arr[i] <= j_arr[i + 1]:
-                    j_troughs.append((i, float(j_arr[i]), float(closes_arr[i])))
-
-        if len(j_troughs) < 2:
-            # Not enough troughs → check if J is in deep oversold as fallback
-            if j_vals[-1] is not None and j_vals[-1] <= p["j_threshold"] / 2:
-                return 60.0
-            return 30.0
-
-        # Take the last two troughs
-        t1, t2 = j_troughs[-2], j_troughs[-1]  # t2 = most recent
-        _, j1, c1 = t1
-        _, j2, c2 = t2
-
-        divergence = (c2 < c1 and j2 > j1)  # price lower, J higher → bullish divergence
-        if divergence:
-            # Score based on divergence strength
-            price_drop = abs(c2 - c1) / c1 if c1 > 0 else 0
-            j_rise = abs(j2 - j1) / abs(j1) if j1 != 0 else 0
-            strength = min(price_drop * 5 + j_rise * 2, 1.0)
-            return round(strength * 100, 2)
-        return 20.0
-
-    # ── 3. Trend regression ──────────────────────────────────────
+    # ── 2. Trend (TrendAnalyzer) ──────────────────────────────────
 
     def _trend_analyzer_score(self, df: pd.DataFrame, p: dict) -> float:
         """用TrendAnalyzer之字转向判断趋势结构并映射到0-100。"""
