@@ -94,6 +94,11 @@ class KDJReversalV2Strategy(BaseStrategy):
             self.last_matched_pattern = None
             return 0.0
 
+        # ── Fake breakout hard-gate: peak次日高开>3%但收跌>3% → 假突破 ──
+        if not self._pass_fake_breakout_gate(df, p):
+            self.last_matched_pattern = None
+            return 0.0
+
         # ── 1. J oversold ──
         j_score = min(np.sqrt(max(1 - j_last / p["j_threshold"], 0)) * 100, 100)
 
@@ -261,6 +266,30 @@ class KDJReversalV2Strategy(BaseStrategy):
             return False
         # 峰值量须至少比下跌均量高5%
         return peak_vol / avg_decline_vol >= 1.05
+
+    def _pass_fake_breakout_gate(self, df: pd.DataFrame, p: dict) -> bool:
+        """peak次日高开>3%但收跌>3% → 假突破，过滤。"""
+        lookback = p["lookback_days"]
+        tail = df.tail(lookback)
+
+        ta = TrendAnalyzer(threshold=0.05)
+        result = ta.analyze(tail)
+        tps = result["turning_points"]
+
+        peaks = [tp for tp in tps if tp["type"] == "peak"]
+        if not peaks:
+            return True
+
+        last_peak = peaks[-1]
+        pi = last_peak["index"]
+        if pi + 1 >= len(tail):
+            return True
+
+        next_day = tail.iloc[pi + 1]
+        peak_price = last_peak["price"]
+        if next_day["open"] > peak_price * 1.03 and next_day["close"] < peak_price * 0.97:
+            return False
+        return True
 
     def _volume_score(self, df: pd.DataFrame, p: dict) -> float:
         """基于TrendAnalyzer转折点的量能结构分析: 峰值放量+下跌缩量。"""
