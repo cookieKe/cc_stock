@@ -31,11 +31,6 @@ class KDJReversalV2Strategy(BaseStrategy):
         # Volume (structure)
         "volume_weight": 0.20,
 
-        # Magnitude multiplier
-        "magnitude_lookback": 60,
-        "magnitude_max_boost": 1.3,
-        "magnitude_min_penalty": 0.7,
-
     }
 
     def __init__(self):
@@ -68,8 +63,7 @@ class KDJReversalV2Strategy(BaseStrategy):
 
     def get_required_data(self) -> dict:
         p = self.parameters
-        days = max(p["kdj_n"], p["lookback_days"], p["pattern_lookback"],
-                   p["magnitude_lookback"], 120)
+        days = max(p["kdj_n"], p["lookback_days"], p["pattern_lookback"], 120)
         return {"kline_days": days + 10}
 
     # ── main scorer ──────────────────────────────────────────────
@@ -127,11 +121,7 @@ class KDJReversalV2Strategy(BaseStrategy):
         total = (j_score * w_map["j"] + trend_score * w_map["trend"]
                  + pattern_score * w_map["pat"] + vol_score * w_map["vol"])
 
-        # ── 6. Magnitude multiplier ──
-        mag = self._magnitude_factor(df, p)
-        total *= mag
-
-        # ── 7. 知行多空乘数 ──
+        # ── 6. 知行多空乘数 ──
         total *= self._zhixng_multiplier(df, p)
 
         return round(min(max(total, 0), 100), 2)
@@ -340,26 +330,7 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         return round(min(max(score, 0), 100), 2)
 
-    # ── 6. Magnitude factor ──────────────────────────────────────
-
-    def _magnitude_factor(self, df: pd.DataFrame, p: dict) -> float:
-        """反转幅度: 跌得越深 → 潜在空间越大。作为乘数而非加数。"""
-        lookback = p["magnitude_lookback"]
-        closes = df["close"].astype(float).tail(lookback).tolist()
-        if len(closes) < 10:
-            return 1.0
-
-        high = max(closes[:-3])   # exclude last 3 to avoid counting the reversal itself
-        low = closes[-1]
-        if high <= 0 or low <= 0:
-            return 1.0
-
-        drop_pct = (high - low) / high  # e.g. 0.30 = 30% drop
-        # Normalize: 5% drop → 0.7, 20% drop → 1.3
-        factor = 0.7 + drop_pct * 3
-        return round(min(max(factor, p["magnitude_min_penalty"]), p["magnitude_max_boost"]), 3)
-
-    # ── 7. 知行多空乘数 ─────────────────────────────────────────
+    # ── 6. 知行多空乘数 ─────────────────────────────────────────
 
     def _zhixng_multiplier(self, df: pd.DataFrame, p: dict) -> float:
         """收盘价 vs BBI 位置决定折扣: >=BBI→1.0, >=95%→0.8, >=90%→0.5, <90%→0.2。"""
