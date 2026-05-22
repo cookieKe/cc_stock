@@ -310,11 +310,16 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         peak_vol = float(tail["volume"].iloc[pi])
         decline_vols = tail["volume"].iloc[pi + 1 : ti + 1].astype(float)
+        max_decline_vol = decline_vols.max()
         avg_decline_vol = decline_vols.mean()
         if avg_decline_vol < 1e-9:
             return True
 
-        return peak_vol / avg_decline_vol >= 1.0
+        # 峰值量须为整个下跌段的最大量(不允许后续某天量更大)
+        if peak_vol <= max_decline_vol:
+            return False
+        # 峰值量须至少比下跌均量高5%
+        return peak_vol / avg_decline_vol >= 1.05
 
     def _volume_score(self, df: pd.DataFrame, p: dict) -> float:
         """基于TrendAnalyzer转折点的量能结构分析: 峰值放量+下跌缩量。"""
