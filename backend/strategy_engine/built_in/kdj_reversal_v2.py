@@ -287,7 +287,7 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         next_day = tail.iloc[pi + 1]
         peak_price = last_peak["price"]
-        if next_day["open"] > peak_price * 1.03 and next_day["close"] < peak_price * 0.97:
+        if next_day["open"] > peak_price * 1.02 and next_day["close"] < peak_price * 0.97:
             return False
         return True
 
