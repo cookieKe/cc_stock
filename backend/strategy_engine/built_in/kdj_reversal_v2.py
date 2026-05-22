@@ -33,12 +33,8 @@ class KDJReversalV2Strategy(BaseStrategy):
         "pattern_lookback": 60,
         "pattern_min_corr": 0.3,
 
-        # Volume
+        # Volume (structure)
         "volume_weight": 0.20,
-        "volume_short": 5,
-        "volume_long": 20,
-        "volume_boost": 1.2,
-        "volume_penalty": 0.7,
 
         # Magnitude multiplier
         "magnitude_lookback": 60,
@@ -111,11 +107,6 @@ class KDJReversalV2Strategy(BaseStrategy):
 
         # ── 知行多空线 hard-gate: 收盘价 < 多空线 * threshold → 直接过滤 ──
         if not self._pass_zhixng_bb_gate(df, p):
-            self.last_matched_pattern = None
-            return 0.0
-
-        # ── 峰值量能 hard-gate: 往前找最近局部高点(比前后都高)，若该日量<次日量 → 排除 ──
-        if not self._pass_peak_volume_gate(df, p):
             self.last_matched_pattern = None
             return 0.0
 
@@ -294,22 +285,77 @@ class KDJReversalV2Strategy(BaseStrategy):
     # ── 5. Volume confirmation ───────────────────────────────────
 
     def _volume_score(self, df: pd.DataFrame, p: dict) -> float:
-        """近期放量→加分，缩量→扣分。"""
-        if "volume" not in df.columns or len(df) < p["volume_long"]:
+        """基于TrendAnalyzer转折点的量能结构分析: 峰值放量+下跌缩量。"""
+        if "volume" not in df.columns:
             return 50.0
 
-        vols = df["volume"].astype(float).tolist()
-        short_ma = np.mean(vols[-p["volume_short"]:])
-        long_ma = np.mean(vols[-p["volume_long"]:])
-        if long_ma < 1e-9:
+        lookback = p["lookback_days"]
+        tail = df.tail(lookback).copy()
+
+        ta = TrendAnalyzer(threshold=0.05)
+        result = ta.analyze(tail)
+        tps = result["turning_points"]
+
+        if len(tps) < 2:
             return 50.0
 
-        ratio = short_ma / long_ma
-        if ratio >= p["volume_boost"]:
-            return round(min(50 + (ratio - p["volume_boost"]) * 50, 100), 2)
-        elif ratio <= p["volume_penalty"]:
-            return round(max(50 - (p["volume_penalty"] - ratio) * 100, 0), 2)
-        return 50.0
+        peaks = [tp for tp in tps if tp["type"] == "peak"]
+        troughs = [tp for tp in tps if tp["type"] == "trough"]
+        if not peaks or not troughs:
+            return 50.0
+
+        last_peak = peaks[-1]
+
+        subsequent_trough = None
+        for t in troughs:
+            if t["index"] > last_peak["index"]:
+                subsequent_trough = t
+                break
+        if subsequent_trough is None:
+            return 50.0
+
+        pi, ti = last_peak["index"], subsequent_trough["index"]
+        if ti - pi < 2:
+            return 50.0
+
+        peak_vol = float(tail["volume"].iloc[pi])
+        decline_vols = tail["volume"].iloc[pi + 1 : ti + 1].astype(float)
+        decline_closes = tail["close"].iloc[pi + 1 : ti + 1].astype(float)
+
+        avg_decline_vol = decline_vols.mean()
+        if avg_decline_vol < 1e-9:
+            return 50.0
+
+        # Condition 1 (60%): peak volume vs decline average
+        vol_ratio = peak_vol / avg_decline_vol
+        if vol_ratio >= 1.2:
+            c1 = 60.0
+        elif vol_ratio >= 1.0:
+            c1 = 45.0
+        else:
+            c1 = max(0.0, 45.0 - (1.0 - vol_ratio) * 90.0)
+
+        # Condition 2 (40%): volume contraction on down days
+        down_days = 0
+        contraction_days = 0
+        for i in range(1, len(decline_closes)):
+            if decline_closes.iloc[i] < decline_closes.iloc[i - 1]:
+                down_days += 1
+                if decline_vols.iloc[i] < decline_vols.iloc[i - 1]:
+                    contraction_days += 1
+
+        if down_days == 0:
+            c2 = 20.0
+        else:
+            contraction_pct = contraction_days / down_days
+            if contraction_pct >= 0.7:
+                c2 = 40.0
+            elif contraction_pct >= 0.5:
+                c2 = 28.0
+            else:
+                c2 = contraction_pct * 56.0
+
+        return round(min(max(c1 + c2, 0), 100), 2)
 
     # ── 6. Magnitude factor ──────────────────────────────────────
 
@@ -353,37 +399,7 @@ class KDJReversalV2Strategy(BaseStrategy):
         zhixng_bb = sum(vals) / len(vals)
         return latest_close >= zhixng_bb * threshold
 
-    # ── 8. 峰值量能硬过滤 ─────────────────────────────────────────
-
-    def _pass_peak_volume_gate(self, df: pd.DataFrame, p: dict) -> bool:
-        """从当前往前扫，找第一个局部高点(比前后都高)，若其量 < 次日量 → 排除。"""
-        if "volume" not in df.columns:
-            return True
-
-        lookback = p.get("lookback_days", 60)
-        tail = df.tail(lookback)
-        closes = tail["close"].astype(float)
-        volumes = tail["volume"].astype(float)
-
-        n = len(closes)
-        if n < 3:
-            return True
-
-        # 从倒数第二天往前扫（最后一天没有"次日"），找局部最高点
-        peak_iloc = None
-        for i in range(n - 2, 0, -1):
-            if closes.iloc[i] > closes.iloc[i - 1] and closes.iloc[i] > closes.iloc[i + 1]:
-                peak_iloc = i
-                break
-
-        if peak_iloc is None:
-            return True
-
-        vol_peak = float(volumes.iloc[peak_iloc])
-        vol_next = float(volumes.iloc[peak_iloc + 1])
-        return vol_peak >= vol_next
-
-    # ── 9. 知行短期惩罚 ─────────────────────────────────────────
+    # ── 8. 知行短期惩罚 ─────────────────────────────────────────
 
     def _zhixng_short_penalty(self, closes: list, p: dict) -> float:
         """收盘价 < EMA(EMA(C,10),10) 时扣分，表示短期趋势尚未转好。"""
