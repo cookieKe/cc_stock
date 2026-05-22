@@ -44,7 +44,7 @@ class TrendAnalyzer:
             return self._no_turning_result(closes, dates)
 
         trend = self._classify_trend(turning_points)
-        strength = self._calc_strength(turning_points, closes, trend)
+        strength = self._calc_strength(turning_points, trend)
         last_high = self._last_of_type(turning_points, 'peak')
         last_low = self._last_of_type(turning_points, 'trough')
 
@@ -171,7 +171,7 @@ class TrendAnalyzer:
 
     # ── strength calculation ─────────────────────────────────────────
 
-    def _calc_strength(self, turning_points, closes, trend):
+    def _calc_strength(self, turning_points, trend):
         """综合斜率与持续性计算趋势强度."""
         slope = self._calc_slope(turning_points, trend)
         persistence = self._count_persistence(turning_points, trend)

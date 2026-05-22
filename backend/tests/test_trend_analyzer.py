@@ -91,8 +91,9 @@ class TestTurningPoints:
         result_recent = ta.analyze(df_recent)
 
         # The last turning point type should match
-        if result_full['turning_points'] and result_recent['turning_points']:
-            assert result_full['turning_points'][-1]['type'] == result_recent['turning_points'][-1]['type']
+        assert result_full['turning_points'], "Full data should produce turning points"
+        assert result_recent['turning_points'], "Recent data should produce turning points"
+        assert result_full['turning_points'][-1]['type'] == result_recent['turning_points'][-1]['type']
 
 
 class TestTrendClassification:
@@ -168,8 +169,8 @@ class TestStrength:
         df = make_df(prices)
         ta = TrendAnalyzer(threshold=0.05)
         result = ta.analyze(df)
-        if result['trend'] == 'sideways':
-            assert result['strength']['persistence'] == 0
+        assert result['trend'] == 'sideways'
+        assert result['strength']['persistence'] == 0
 
     def test_last_high_low(self):
         """Should return the most recent peak and trough prices."""
