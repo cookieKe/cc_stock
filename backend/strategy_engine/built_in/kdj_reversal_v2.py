@@ -41,11 +41,6 @@ class KDJReversalV2Strategy(BaseStrategy):
         "magnitude_max_boost": 1.3,
         "magnitude_min_penalty": 0.7,
 
-        # 知行短期惩罚: 收盘价 < EMA(EMA(C,10),10) 时扣分
-        "zhixng_penalty": 5,
-
-        # 知行多空线硬过滤: 收盘价 < 知行多空线 * threshold → 直接过滤
-        "zhixng_bb_threshold": 0.9,
     }
 
     def __init__(self):
@@ -105,11 +100,6 @@ class KDJReversalV2Strategy(BaseStrategy):
             self.last_matched_pattern = None
             return 0.0
 
-        # ── 知行多空线 hard-gate: 收盘价 < 多空线 * threshold → 直接过滤 ──
-        if not self._pass_zhixng_bb_gate(df, p):
-            self.last_matched_pattern = None
-            return 0.0
-
         # ── 1. J oversold ──
         j_score = min((1 - j_last / p["j_threshold"]) * 100, 100)
 
@@ -146,8 +136,8 @@ class KDJReversalV2Strategy(BaseStrategy):
         mag = self._magnitude_factor(df, p)
         total *= mag
 
-        # ── 7. 知行短期惩罚 ──
-        total -= self._zhixng_short_penalty(closes, p)
+        # ── 7. 知行多空乘数 ──
+        total *= self._zhixng_multiplier(df, p)
 
         return round(min(max(total, 0), 100), 2)
 
@@ -376,14 +366,13 @@ class KDJReversalV2Strategy(BaseStrategy):
         factor = 0.7 + drop_pct * 3
         return round(min(max(factor, p["magnitude_min_penalty"]), p["magnitude_max_boost"]), 3)
 
-    # ── 7. 知行多空线硬过滤 ─────────────────────────────────────
+    # ── 7. 知行多空乘数 ─────────────────────────────────────────
 
-    def _pass_zhixng_bb_gate(self, df: pd.DataFrame, p: dict) -> bool:
-        """收盘价 < 知行多空线(BBI) * threshold → False，直接过滤。"""
-        threshold = p.get("zhixng_bb_threshold", 0.9)
+    def _zhixng_multiplier(self, df: pd.DataFrame, p: dict) -> float:
+        """收盘价 vs BBI 位置决定折扣: >=BBI→1.0, >=95%→0.8, >=90%→0.5, <90%→0.2。"""
         closes = df["close"].astype(float)
         if len(closes) < 114:
-            return True  # 数据不足时不过滤
+            return 1.0
 
         s = pd.Series(closes)
         ma14 = s.rolling(14).mean()
@@ -391,27 +380,17 @@ class KDJReversalV2Strategy(BaseStrategy):
         ma57 = s.rolling(57).mean()
         ma114 = s.rolling(114).mean()
 
-        latest_close = closes.iloc[-1]
         vals = [m.iloc[-1] for m in [ma14, ma28, ma57, ma114] if not pd.isna(m.iloc[-1])]
         if not vals:
-            return True
+            return 1.0
 
-        zhixng_bb = sum(vals) / len(vals)
-        return latest_close >= zhixng_bb * threshold
-
-    # ── 8. 知行短期惩罚 ─────────────────────────────────────────
-
-    def _zhixng_short_penalty(self, closes: list, p: dict) -> float:
-        """收盘价 < EMA(EMA(C,10),10) 时扣分，表示短期趋势尚未转好。"""
-        penalty = p.get("zhixng_penalty", 5)
-        if len(closes) < 20:
-            return 0.0
-        s = pd.Series(closes, dtype=float)
-        ema_double = s.ewm(span=10, adjust=False).mean().ewm(span=10, adjust=False).mean()
-        latest_close = closes[-1]
-        zhixng_val = ema_double.iloc[-1]
-        if pd.isna(zhixng_val):
-            return 0.0
-        if latest_close < zhixng_val:
-            return penalty
-        return 0.0
+        bbi = sum(vals) / len(vals)
+        ratio = closes.iloc[-1] / bbi
+        if ratio >= 1.0:
+            return 1.0
+        elif ratio >= 0.95:
+            return 0.8
+        elif ratio >= 0.90:
+            return 0.5
+        else:
+            return 0.2
