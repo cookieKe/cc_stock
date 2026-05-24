@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
+from backend.models.stock import Stock
 from backend.services.tracker import (
     add_to_watchlist, remove_from_watchlist, update_watchlist_prices,
     get_watchlist_stats, get_watchlist_compare_benchmark,
@@ -24,7 +25,10 @@ def add_stock(data: dict, db: Session = Depends(get_db)):
     source = data.get("source", "手动")
     wl = add_to_watchlist(db, code, notes, source)
     if not wl.stock_code:
-        return {"error": "股票不存在"}
+        exists = db.query(Stock).filter(Stock.code == code).first()
+        if not exists:
+            return {"error": "股票不存在"}
+        return {"error": "该股票无有效价格数据，请先同步日K线"}
     return {
         "id": wl.id,
         "code": wl.stock_code,

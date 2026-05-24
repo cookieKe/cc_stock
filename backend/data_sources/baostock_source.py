@@ -61,7 +61,7 @@ class BaostockSource(DataSource):
             start_date=start_date,
             end_date=end_date,
             frequency="d",
-            adjustflag="2",  # 前复权
+            adjustflag="1",  # 不复权
         )
         if rs.error_code != "0":
             return pd.DataFrame()
@@ -110,7 +110,7 @@ class BaostockSource(DataSource):
             start_date=start_date,
             end_date=end_date,
             frequency="d",
-            adjustflag="3",
+            adjustflag="1",
         )
         if rs.error_code != "0":
             return pd.DataFrame()

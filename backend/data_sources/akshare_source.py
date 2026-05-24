@@ -17,7 +17,7 @@ class AkshareSource(DataSource):
 
     def fetch_daily_kline(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
         symbol = f"sh{code}" if code.startswith("6") else f"sz{code}"
-        df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
+        df = ak.stock_zh_a_daily(symbol=symbol, adjust="")
         if df.empty:
             return df
         df["date"] = pd.to_datetime(df["date"]).dt.date

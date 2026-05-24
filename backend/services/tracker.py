@@ -1,17 +1,26 @@
-from datetime import date, timedelta
+from datetime import date
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import List, Dict, Optional
+from typing import List, Optional
 import numpy as np
 
 from backend.models.watchlist import Watchlist
 from backend.models.market_data import MarketData
 from backend.models.stock import Stock
-from backend.data_sources.akshare_source import AkshareSource
+
+
+def _get_latest_close(db: Session, code: str) -> float:
+    """获取本地DB最新收盘价，不可用时返回0。"""
+    row = (
+        db.query(MarketData)
+        .filter(MarketData.stock_code == code, MarketData.close > 0)
+        .order_by(MarketData.trade_date.desc())
+        .first()
+    )
+    return float(row.close) if row and row.close else 0
 
 
 def add_to_watchlist(db: Session, code: str, notes: str = "", source: str = "手动") -> Watchlist:
-    """添加股票到追踪列表，记录加入时价格及来源。"""
+    """添加股票到追踪列表。加入价取自本地最新收盘价，不调外部API。"""
     existing = db.query(Watchlist).filter(
         Watchlist.stock_code == code, Watchlist.is_active == True  # noqa: E712
     ).first()
@@ -22,18 +31,9 @@ def add_to_watchlist(db: Session, code: str, notes: str = "", source: str = "手
     if not stock:
         return Watchlist()
 
-    source = AkshareSource()
-    quote = source.fetch_realtime_quote(code)
-    added_price = quote.get("price", 0) if quote else 0
-    if added_price == 0:
-        latest = (
-            db.query(MarketData)
-            .filter(MarketData.stock_code == code)
-            .order_by(MarketData.trade_date.desc())
-            .first()
-        )
-        if latest:
-            added_price = latest.close
+    added_price = _get_latest_close(db, code)
+    if added_price <= 0:
+        return Watchlist()  # 无有效价格，拒绝添加
 
     wl = Watchlist(
         stock_code=code,
@@ -62,35 +62,29 @@ def remove_from_watchlist(db: Session, watchlist_id: int):
 
 
 def update_watchlist_prices(db: Session) -> int:
-    """更新所有追踪股的最新价格和收益率。"""
+    """更新所有追踪股的最新收盘价和累计收益。纯本地计算，不调外部API。"""
     items = db.query(Watchlist).filter(Watchlist.is_active == True).all()  # noqa: E712
-    source = AkshareSource()
+    if not items:
+        return 0
+
     updated = 0
     for wl in items:
-        try:
-            quote = source.fetch_realtime_quote(wl.stock_code)
-            if not quote or quote.get("price", 0) == 0:
-                latest = (
-                    db.query(MarketData)
-                    .filter(MarketData.stock_code == wl.stock_code)
-                    .order_by(MarketData.trade_date.desc())
-                    .first()
-                )
-                if latest:
-                    wl.latest_price = latest.close
-            else:
-                wl.latest_price = quote["price"]
+        price = _get_latest_close(db, wl.stock_code)
+        if price > 0:
+            wl.latest_price = price
+        # price <= 0 时保持原 latest_price 不变
 
-            if wl.latest_price and wl.added_price:
+        if wl.added_price and wl.added_price > 0:
+            if wl.latest_price and wl.latest_price > 0:
                 wl.cumulative_return = round((wl.latest_price / wl.added_price - 1) * 100, 2)
-                wl.holding_days = (date.today() - wl.added_date).days
-                if wl.highest_price is None or wl.latest_price > wl.highest_price:
-                    wl.highest_price = wl.latest_price
-                if wl.lowest_price is None or wl.latest_price < wl.lowest_price:
-                    wl.lowest_price = wl.latest_price
-            updated += 1
-        except Exception:
-            pass
+            wl.holding_days = (date.today() - wl.added_date).days
+            if wl.highest_price is None or wl.latest_price > wl.highest_price:
+                wl.highest_price = wl.latest_price
+            if wl.lowest_price is None or wl.latest_price < wl.lowest_price:
+                wl.lowest_price = wl.latest_price
+
+        updated += 1
+
     db.commit()
     return updated
 
@@ -166,23 +160,35 @@ def _get_best_worst(items: List[Watchlist], best: bool = True) -> dict:
 
 
 def get_watchlist_compare_benchmark(db: Session) -> Optional[dict]:
-    """追踪组合与沪深300同期表现对比。"""
+    """追踪组合与沪深300同期表现对比。优先从本地DB取指数数据。"""
     items = db.query(Watchlist).filter(Watchlist.is_active == True).all()  # noqa: E712
     if not items:
         return None
-    from backend.data_sources.akshare_source import AkshareSource
-    source = AkshareSource()
-    try:
-        earliest = min(wl.added_date for wl in items)
-        df, _ = source.fetch_index_kline("000300", earliest.strftime("%Y%m%d"), date.today().strftime("%Y%m%d"))
-        if df.empty:
-            return None
-        bench_return = (df.iloc[-1]["close"] / df.iloc[0]["close"] - 1) * 100
-        avg_return = np.mean([wl.cumulative_return for wl in items if wl.cumulative_return is not None])
-        return {
-            "portfolio_avg_return": round(avg_return, 2),
-            "benchmark_return": round(bench_return, 2),
-            "excess_return": round(avg_return - bench_return, 2),
-        }
-    except Exception:
+
+    earliest = min(wl.added_date for wl in items)
+    if not earliest:
         return None
+
+    # 从本地DB取沪深300日K线
+    rows = (
+        db.query(MarketData)
+        .filter(
+            MarketData.stock_code == "000300",
+            MarketData.trade_date >= earliest,
+            MarketData.trade_date <= date.today(),
+        )
+        .order_by(MarketData.trade_date.asc())
+        .all()
+    )
+
+    if len(rows) < 2:
+        return None
+
+    bench_return = (rows[-1].close / rows[0].close - 1) * 100
+    returns = [wl.cumulative_return for wl in items if wl.cumulative_return is not None]
+    avg_return = float(np.mean(returns)) if returns else 0
+    return {
+        "portfolio_avg_return": round(avg_return, 2),
+        "benchmark_return": round(bench_return, 2),
+        "excess_return": round(avg_return - bench_return, 2),
+    }

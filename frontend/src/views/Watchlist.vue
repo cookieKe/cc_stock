@@ -23,7 +23,7 @@
       </div>
       <div class="metric-card">
         <div class="label">最大收益</div>
-        <div class="value positive">{{ store.watchlist.max_return }}%</div>
+        <div class="value" :class="(store.watchlist.max_return || 0) >= 0 ? 'positive' : 'negative'">{{ store.watchlist.max_return }}%</div>
       </div>
       <div class="metric-card">
         <div class="label">最大亏损</div>
@@ -49,7 +49,7 @@
             <td>{{ item.added_date }}</td>
             <td>{{ item.added_price }}</td>
             <td>{{ item.latest_price }}</td>
-            <td :class="(item.cumulative_return || 0) >= 0 ? 'positive' : 'negative'"><b>{{ item.cumulative_return }}%</b></td>
+            <td :class="(item.cumulative_return || 0) >= 0 ? 'positive' : 'negative'"><b>{{ item.cumulative_return != null ? item.cumulative_return : '-' }}%</b></td>
             <td>{{ item.holding_days }}天</td>
             <td>{{ item.highest_price }}</td>
             <td>{{ item.lowest_price }}</td>

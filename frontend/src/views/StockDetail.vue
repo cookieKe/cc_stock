@@ -8,8 +8,13 @@
       <div class="header-right">
         <button class="btn btn-default btn-sm" :disabled="!prevCode" @click="goPrev" title="上一个 (←)">◀ 上一个</button>
         <button class="btn btn-default btn-sm" :disabled="!nextCode" @click="goNext" title="下一个 (→)">下一个 ▶</button>
-        <button class="btn btn-primary btn-sm" @click="addWatch">+ 加入追踪</button>
+        <button class="btn btn-primary btn-sm" :disabled="watching" @click="addWatch">{{ watching ? '加入中...' : '+ 加入追踪' }}</button>
       </div>
+    </div>
+
+    <div v-if="store.message" class="card" :style="store.message.type === 'error' ? 'background:#fff1f0; border:1px solid #ffa39e' : 'background:#f6ffed; border:1px solid #b7eb8f'" style="margin-bottom:12px">
+      {{ store.message.text }}
+      <button class="btn btn-default btn-sm" style="float:right" @click="store.clearMessage">×</button>
     </div>
 
     <div class="card chart-card">
@@ -351,8 +356,22 @@ function renderChart(kline, kdj, vol, deepV) {
   chart.setOption(option)
 }
 
+const watching = ref(false)
+
 async function addWatch() {
-  await api.addToWatchlist(route.params.code, '', '手动')
+  watching.value = true
+  try {
+    const res = await api.addToWatchlist(route.params.code, '', '手动')
+    if (res.data?.error) {
+      store.message = { type: 'error', text: res.data.error }
+    } else {
+      store.message = { type: 'success', text: `${res.data.name || res.data.code} 已加入追踪` }
+    }
+  } catch (e) {
+    store.message = { type: 'error', text: '加入追踪失败: ' + (e.response?.data?.detail || e.message) }
+  } finally {
+    watching.value = false
+  }
 }
 </script>
 
