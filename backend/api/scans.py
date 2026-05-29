@@ -11,8 +11,8 @@ router = APIRouter(prefix="/api/scans", tags=["scans"])
 
 
 @router.post("/run")
-def run_scan(strategy_name: str = "", db: Session = Depends(get_db)):
-    _log.info(f"POST /api/scans/run strategy_name='{strategy_name}'")
+def run_scan(strategy_name: str = "", include_chinet: bool = True, include_star: bool = True, db: Session = Depends(get_db)):
+    _log.info(f"POST /api/scans/run strategy_name='{strategy_name}' include_chinet={include_chinet} include_star={include_star}")
     from backend.models.strategy import Strategy
     strategy_ids = None
     if strategy_name:
@@ -24,15 +24,15 @@ def run_scan(strategy_name: str = "", db: Session = Depends(get_db)):
             _log.warning(f"  策略名 '{strategy_name}' 未在DB中找到!")
     else:
         _log.info(f"  strategy_name为空, 将扫描全部启用策略")
-    result = scan_market(db, strategy_ids)
+    result = scan_market(db, strategy_ids, include_chinet, include_star)
     _log.info(f"POST /api/scans/run 完成: total_scanned={result.get('total_scanned')} total_ranked={result.get('total_ranked')}")
     return result
 
 
 @router.get("/latest")
-def latest_ranking(strategy_name: str = "", limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
-    result = get_latest_ranking(db, strategy_name if strategy_name else None, limit, offset)
-    _log.info(f"GET /api/scans/latest strategy_name='{strategy_name}' limit={limit} offset={offset} -> total={result.get('total')} items={len(result.get('items',[]))}")
+def latest_ranking(strategy_name: str = "", limit: int = 50, offset: int = 0, include_chinet: bool = True, include_star: bool = True, db: Session = Depends(get_db)):
+    result = get_latest_ranking(db, strategy_name if strategy_name else None, limit, offset, include_chinet, include_star)
+    _log.info(f"GET /api/scans/latest strategy_name='{strategy_name}' limit={limit} offset={offset} include_chinet={include_chinet} include_star={include_star} -> total={result.get('total')} items={len(result.get('items',[]))}")
     return result
 
 

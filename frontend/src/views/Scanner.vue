@@ -45,11 +45,19 @@
       </div>
     </div>
 
-    <div class="flex-row" style="margin:16px 0">
+    <div class="flex-row" style="margin:16px 0; align-items:center; gap:12px">
       <select v-model="strategyFilter" @change="onFilterChange">
         <option value="">全部策略</option>
         <option v-for="s in store.strategies" :key="s.name" :value="s.name">{{ s.display_name }}</option>
       </select>
+      <label class="chinet-toggle">
+        <input type="checkbox" v-model="store.includeChinet" @change="onFilterChange" />
+        包含创业板
+      </label>
+      <label class="chinet-toggle">
+        <input type="checkbox" v-model="store.includeStar" @change="onFilterChange" />
+        包含科创板
+      </label>
       <button class="btn btn-primary" :disabled="store.scanLoading" @click="runScan">
         {{ store.scanLoading ? '扫描中...' : '执行全市场扫描' }}
       </button>
@@ -73,7 +81,7 @@
               <td><router-link :to="`/stock/${r.code}`">{{ r.name }}</router-link></td>
               <td><b>{{ r.score }}</b></td>
               <td><span :style="r.matched_pattern ? 'color:#1890ff;font-weight:bold' : 'color:#ccc'">{{ r.matched_pattern || '-' }}</span></td>
-              <td><button class="btn btn-primary btn-sm" @click="addWatch(r.code)">+追踪</button></td>
+              <td><button class="btn btn-primary btn-sm" @click="addWatch(r)">+追踪</button></td>
             </tr>
           </tbody>
         </table>
@@ -117,12 +125,12 @@ async function onScroll(e) {
   }
 }
 async function runScan() {
-  await store.runScan(strategyFilter.value)
+  await store.runScan(strategyFilter.value, store.includeChinet, store.includeStar)
   await loadRankings()
 }
-async function addWatch(code) {
-  const src = strategyFilter.value || '全市场扫描'
-  await api.addToWatchlist(code, '', src)
+async function addWatch(item) {
+  const src = item.strategy_name || '全市场扫描'
+  await api.addToWatchlist(item.code, '', src)
 }
 function formatCap(n) {
   if (!n) return '-'
@@ -277,5 +285,15 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   color: #3f8600;
+}
+
+.chinet-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  user-select: none;
 }
 </style>

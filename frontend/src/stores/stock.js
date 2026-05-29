@@ -15,22 +15,28 @@ export const useStockStore = defineStore('stock', {
     strategies: [],
     stockCount: null,
     initLoading: false,
+    includeChinet: true,
+    includeStar: true,
     scanLoading: false,
     syncLoading: false,
     message: null,
   }),
   actions: {
-    async fetchRankings(strategyName, reset = true) {
+    async fetchRankings(strategyName, reset = true, includeChinet = undefined, includeStar = undefined) {
       if (reset) {
         this.rankingsOffset = 0
         this.rankings = []
         this.rankingsTotal = 0
       }
       this.rankingsStrategy = strategyName || ''
+      const inc = includeChinet !== undefined ? includeChinet : this.includeChinet
+      const ins = includeStar !== undefined ? includeStar : this.includeStar
       const res = await api.getLatestRanking(
         strategyName || '',
         this.rankingsLimit,
-        this.rankingsOffset
+        this.rankingsOffset,
+        inc,
+        ins
       )
       const data = res.data
       if (data && data.items) {
@@ -46,7 +52,9 @@ export const useStockStore = defineStore('stock', {
       const res = await api.getLatestRanking(
         name,
         this.rankingsLimit,
-        this.rankingsOffset
+        this.rankingsOffset,
+        this.includeChinet,
+        this.includeStar
       )
       const data = res.data
       if (data && data.items) {
@@ -119,11 +127,13 @@ export const useStockStore = defineStore('stock', {
         this.syncLoading = false
       }
     },
-    async runScan(strategyName) {
+    async runScan(strategyName, includeChinet = undefined, includeStar = undefined) {
       this.scanLoading = true
       this.message = null
       try {
-        const res = await api.runScan(strategyName)
+        const inc = includeChinet !== undefined ? includeChinet : this.includeChinet
+        const ins = includeStar !== undefined ? includeStar : this.includeStar
+        const res = await api.runScan(strategyName, inc, ins)
         if (res.data?.error) {
           this.message = { type: 'error', text: res.data.error }
         } else {

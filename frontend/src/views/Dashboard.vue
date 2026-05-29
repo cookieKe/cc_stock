@@ -93,7 +93,7 @@
             <td>{{ r.code }}</td>
             <td><router-link :to="`/stock/${r.code}`">{{ r.name }}</router-link></td>
             <td><b>{{ r.score }}</b></td>
-            <td><button class="btn btn-primary btn-sm" @click="addWatch(r.code)">+追踪</button></td>
+            <td><button class="btn btn-primary btn-sm" @click="addWatch(r)">+追踪</button></td>
           </tr>
         </tbody>
       </table>
@@ -133,8 +133,8 @@ async function runScan() {
   await store.fetchRankings('')
   await store.fetchWatchlist()
 }
-async function addWatch(code) {
-  await api.addToWatchlist(code)
+async function addWatch(item) {
+  await api.addToWatchlist(item.code, '', item.strategy_name || '全市场扫描')
   await store.fetchWatchlist()
 }
 onMounted(loadAll)

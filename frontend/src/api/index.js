@@ -32,8 +32,8 @@ export default {
   clearSlippedFishCache: () => api.delete('/slipped-fish/cache'),
 
   // Scans
-  runScan: (strategyName) => api.post('/scans/run', null, { params: { strategy_name: strategyName || '' } }),
-  getLatestRanking: (name, limit, offset) => api.get('/scans/latest', { params: { strategy_name: name, limit: limit || 50, offset: offset || 0 } }),
+  runScan: (strategyName, includeChinet = true, includeStar = true) => api.post('/scans/run', null, { params: { strategy_name: strategyName || '', include_chinet: includeChinet, include_star: includeStar } }),
+  getLatestRanking: (name, limit, offset, includeChinet = true, includeStar = true) => api.get('/scans/latest', { params: { strategy_name: name, limit: limit || 50, offset: offset || 0, include_chinet: includeChinet, include_star: includeStar } }),
   getDataStatus: () => api.get('/stats/data-status'),
   getMarketOverview: () => api.get('/stats/market-overview'),
   clearMarketOverviewCache: () => api.delete('/stats/market-overview/cache'),

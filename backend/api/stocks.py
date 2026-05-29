@@ -42,7 +42,17 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)):
     stock = db.query(Stock).filter(Stock.code == code).first()
     if not stock:
         return {"error": "股票不存在"}
-    return {"code": stock.code, "name": stock.name, "exchange": stock.exchange, "industry": stock.industry}
+
+    from backend.models.watchlist import Watchlist
+    watch = db.query(Watchlist).filter(
+        Watchlist.stock_code == code, Watchlist.is_active == True  # noqa: E712
+    ).first()
+    watchlist_added_at = str(watch.created_at) if watch else None
+
+    return {
+        "code": stock.code, "name": stock.name, "exchange": stock.exchange,
+        "industry": stock.industry, "watchlist_added_at": watchlist_added_at,
+    }
 
 
 @router.post("/sync/list")

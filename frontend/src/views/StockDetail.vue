@@ -3,7 +3,10 @@
     <div class="detail-header">
       <div class="header-left">
         <h2>{{ stock.name }} ({{ stock.code }})</h2>
-        <span v-if="navCodes.length" class="nav-info">{{ currentIndex + 1 }} / {{ navCodes.length }}</span>
+        <div class="header-meta">
+          <span v-if="navCodes.length" class="nav-info">{{ currentIndex + 1 }} / {{ navCodes.length }}</span>
+          <span v-if="stock.watchlist_added_at" class="watch-added">自选加入: {{ stock.watchlist_added_at }}</span>
+        </div>
       </div>
       <div class="header-right">
         <button class="btn btn-default btn-sm" :disabled="!prevCode" @click="goPrev" title="上一个 (←)">◀ 上一个</button>
@@ -361,7 +364,9 @@ const watching = ref(false)
 async function addWatch() {
   watching.value = true
   try {
-    const res = await api.addToWatchlist(route.params.code, '', '手动')
+    const rankEntry = store.rankings.find(r => r.code === route.params.code)
+    const source = rankEntry?.strategy_name || '手动'
+    const res = await api.addToWatchlist(route.params.code, '', source)
     if (res.data?.error) {
       store.message = { type: 'error', text: res.data.error }
     } else {
@@ -392,8 +397,14 @@ async function addWatch() {
 
 .header-left {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.header-meta {
+  display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .header-right {
@@ -408,6 +419,15 @@ async function addWatch() {
   background: #f5f5f5;
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.watch-added {
+  font-size: 12px;
+  color: #fa8c16;
+  background: #fff7e6;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #ffd591;
 }
 
 .detail-header h2 {
