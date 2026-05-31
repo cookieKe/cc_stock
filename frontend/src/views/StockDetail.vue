@@ -11,7 +11,13 @@
       <div class="header-right">
         <button class="btn btn-default btn-sm" :disabled="!prevCode" @click="goPrev" title="上一个 (←)">◀ 上一个</button>
         <button class="btn btn-default btn-sm" :disabled="!nextCode" @click="goNext" title="下一个 (→)">下一个 ▶</button>
-        <button class="btn btn-primary btn-sm" :disabled="watching" @click="addWatch">{{ watching ? '加入中...' : '+ 加入追踪' }}</button>
+        <button v-if="!showAddForm" class="btn btn-primary btn-sm" :disabled="watching" @click="showAddForm = true">+ 加入追踪</button>
+        <div v-else class="add-form-inline">
+          <input v-model="addTarget" type="number" step="0.01" placeholder="预期价" class="add-input" @keyup.enter="addWatch" />
+          <input v-model="addStopLoss" type="number" step="0.01" placeholder="止损价" class="add-input" @keyup.enter="addWatch" />
+          <button class="btn btn-primary btn-sm" :disabled="watching" @click="addWatch">{{ watching ? '加入中...' : '确认' }}</button>
+          <button class="btn btn-default btn-sm" @click="showAddForm = false; addTarget = ''; addStopLoss = ''">取消</button>
+        </div>
       </div>
     </div>
 
@@ -360,6 +366,9 @@ function renderChart(kline, kdj, vol, deepV) {
 }
 
 const watching = ref(false)
+const showAddForm = ref(false)
+const addTarget = ref('')
+const addStopLoss = ref('')
 
 async function addWatch() {
   watching.value = true
@@ -369,9 +378,19 @@ async function addWatch() {
     const res = await api.addToWatchlist(route.params.code, '', source)
     if (res.data?.error) {
       store.message = { type: 'error', text: res.data.error }
-    } else {
-      store.message = { type: 'success', text: `${res.data.name || res.data.code} 已加入追踪` }
+      return
     }
+    // 如果填写了预期价/止损价，在添加后立即更新
+    if (res.data.id && (addTarget.value || addStopLoss.value)) {
+      const data = {}
+      if (addTarget.value) data.target_price = parseFloat(addTarget.value)
+      if (addStopLoss.value) data.stop_loss_price = parseFloat(addStopLoss.value)
+      try { await api.updateWatchlistItem(res.data.id, data) } catch {}
+    }
+    store.message = { type: 'success', text: `${res.data.name || res.data.code} 已加入追踪` }
+    showAddForm.value = false
+    addTarget.value = ''
+    addStopLoss.value = ''
   } catch (e) {
     store.message = { type: 'error', text: '加入追踪失败: ' + (e.response?.data?.detail || e.message) }
   } finally {
@@ -444,5 +463,24 @@ async function addWatch() {
   width: 100%;
   height: 100%;
   min-height: 500px;
+}
+
+.add-form-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-input {
+  width: 90px;
+  padding: 3px 8px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.add-input:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24,144,255,.1);
 }
 </style>

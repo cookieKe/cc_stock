@@ -35,3 +35,13 @@ def init_db():
                 conn.execute(text("ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT '手动'"))
     except Exception:
         pass
+    # 迁移: watchlist 新增 target_price / stop_loss_price / sell_price
+    for col_name in ['target_price', 'stop_loss_price', 'sell_price']:
+        try:
+            with engine.begin() as conn:
+                if "sqlite" in settings.database_url:
+                    conn.execute(text(f"ALTER TABLE watchlist ADD COLUMN {col_name} FLOAT"))
+                else:
+                    conn.execute(text(f"ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS {col_name} FLOAT"))
+        except Exception:
+            pass

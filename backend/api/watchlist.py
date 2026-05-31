@@ -5,7 +5,7 @@ from backend.database import get_db
 from backend.models.stock import Stock
 from backend.services.tracker import (
     add_to_watchlist, remove_from_watchlist, update_watchlist_prices,
-    get_watchlist_stats, get_watchlist_compare_benchmark,
+    get_watchlist_stats, get_watchlist_compare_benchmark, update_watchlist_item,
 )
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
@@ -55,4 +55,13 @@ def compare_benchmark(db: Session = Depends(get_db)):
     result = get_watchlist_compare_benchmark(db)
     if not result:
         return {"error": "无法获取基准数据"}
+    return result
+
+
+@router.put("/{item_id}")
+def update_item(item_id: int, data: dict, db: Session = Depends(get_db)):
+    """更新追踪项的价格字段（预期价/止损价/卖出价）。"""
+    result = update_watchlist_item(db, item_id, data)
+    if not result:
+        return {"error": "追踪项不存在"}
     return result

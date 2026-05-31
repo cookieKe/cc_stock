@@ -43,6 +43,7 @@ export default {
   getWatchlist: () => api.get('/watchlist/'),
   addToWatchlist: (code, notes, source) => api.post('/watchlist/', { code, notes, source: source || '手动' }),
   removeFromWatchlist: (id) => api.delete(`/watchlist/${id}`),
+  updateWatchlistItem: (id, data) => api.put(`/watchlist/${id}`, data),
   updatePrices: () => api.post('/watchlist/update-prices'),
   getBenchmark: () => api.get('/watchlist/benchmark'),
 

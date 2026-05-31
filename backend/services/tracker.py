@@ -54,10 +54,13 @@ def add_to_watchlist(db: Session, code: str, notes: str = "", source: str = "手
 
 
 def remove_from_watchlist(db: Session, watchlist_id: int):
-    """移除追踪（软删除，标记is_active=False）。"""
+    """移除追踪。活跃项软删除，已结束项硬删除。"""
     wl = db.query(Watchlist).filter(Watchlist.id == watchlist_id).first()
     if wl:
-        wl.is_active = False
+        if wl.is_active:
+            wl.is_active = False
+        else:
+            db.delete(wl)
         db.commit()
 
 
@@ -89,18 +92,45 @@ def update_watchlist_prices(db: Session) -> int:
     return updated
 
 
+def _item_to_dict(wl: Watchlist) -> dict:
+    """将 Watchlist 对象序列化为字典，包含所有显示字段。"""
+    sell_return = None
+    if wl.sell_price and wl.added_price and wl.added_price > 0:
+        sell_return = round((wl.sell_price / wl.added_price - 1) * 100, 2)
+    return {
+        "id": wl.id,
+        "code": wl.stock_code,
+        "name": wl.stock_name,
+        "added_date": str(wl.added_date),
+        "added_price": wl.added_price,
+        "latest_price": wl.latest_price,
+        "cumulative_return": wl.cumulative_return,
+        "holding_days": wl.holding_days,
+        "highest_price": wl.highest_price,
+        "lowest_price": wl.lowest_price,
+        "source": wl.source or "手动",
+        "target_price": wl.target_price,
+        "stop_loss_price": wl.stop_loss_price,
+        "sell_price": wl.sell_price,
+        "sell_return": sell_return,
+    }
+
+
 def get_watchlist_stats(db: Session) -> dict:
-    """获取追踪组合统计。"""
-    items = db.query(Watchlist).filter(Watchlist.is_active == True).all()  # noqa: E712
-    if not items:
+    """获取追踪组合统计，拆分活跃/已结束。顶层统计保持向后兼容。"""
+    active_items = db.query(Watchlist).filter(Watchlist.is_active == True).all()  # noqa: E712
+    closed_items = db.query(Watchlist).filter(Watchlist.is_active == False).all()  # noqa: E712
+
+    if not active_items and not closed_items:
         return {"count": 0, "message": "暂无追踪股票"}
 
-    returns = [wl.cumulative_return for wl in items if wl.cumulative_return is not None]
+    # --- 活跃持仓统计（顶层字段向后兼容 Dashboard） ---
+    returns = [wl.cumulative_return for wl in active_items if wl.cumulative_return is not None]
     positive = sum(1 for r in returns if r > 0)
     negative = sum(1 for r in returns if r < 0)
 
-    return {
-        "count": len(items),
+    result = {
+        "count": len(active_items),
         "avg_return": round(np.mean(returns), 2) if returns else 0,
         "median_return": round(np.median(returns), 2) if returns else 0,
         "max_return": round(max(returns), 2) if returns else 0,
@@ -108,26 +138,49 @@ def get_watchlist_stats(db: Session) -> dict:
         "positive_ratio": round(positive / len(returns) * 100, 2) if returns else 0,
         "positive_count": positive,
         "negative_count": negative,
-        "today_avg_change": _get_today_avg_change(db, items),
-        "best": _get_best_worst(items, best=True),
-        "worst": _get_best_worst(items, best=False),
-        "items": [
-            {
-                "id": wl.id,
-                "code": wl.stock_code,
-                "name": wl.stock_name,
-                "added_date": str(wl.added_date),
-                "added_price": wl.added_price,
-                "latest_price": wl.latest_price,
-                "cumulative_return": wl.cumulative_return,
-                "holding_days": wl.holding_days,
-                "highest_price": wl.highest_price,
-                "lowest_price": wl.lowest_price,
-                "source": wl.source or "手动",
-            }
-            for wl in items
-        ],
+        "today_avg_change": _get_today_avg_change(db, active_items),
+        "best": _get_best_worst(active_items, best=True),
+        "worst": _get_best_worst(active_items, best=False),
+        "active_items": [_item_to_dict(wl) for wl in active_items],
+        "closed_items": [_item_to_dict(wl) for wl in closed_items],
     }
+
+    # --- 已结束持仓统计 ---
+    closed_returns = [
+        r for r in (_item_to_dict(wl)["sell_return"] for wl in closed_items)
+        if r is not None
+    ]
+    result["closed_stats"] = {
+        "count": len(closed_items),
+        "avg_sell_return": round(np.mean(closed_returns), 2) if closed_returns else 0,
+    }
+
+    return result
+
+
+def update_watchlist_item(db: Session, item_id: int, data: dict) -> dict:
+    """部分更新追踪项的价格字段。当卖出价从无到有时自动标记为非活跃。"""
+    wl = db.query(Watchlist).filter(Watchlist.id == item_id).first()
+    if not wl:
+        return {}
+
+    # 更新提供的字段
+    if "target_price" in data:
+        wl.target_price = data["target_price"]
+    if "stop_loss_price" in data:
+        wl.stop_loss_price = data["stop_loss_price"]
+    if "sell_price" in data:
+        old_sell = wl.sell_price
+        wl.sell_price = data["sell_price"]
+        # 卖出价从无到有 → 标记非活跃；从有到无 → 恢复活跃
+        if old_sell is None and wl.sell_price is not None:
+            wl.is_active = False
+        elif old_sell is not None and wl.sell_price is None:
+            wl.is_active = True
+
+    db.commit()
+    db.refresh(wl)
+    return _item_to_dict(wl)
 
 
 def _get_today_avg_change(db: Session, items: List[Watchlist]) -> float:
