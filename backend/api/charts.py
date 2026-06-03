@@ -121,7 +121,7 @@ def _calc_kdj(highs, lows, closes, n=9):
 
 @router.get("/deep_v/{code}")
 def get_deep_v(code: str, days: int = 120, db: Session = Depends(get_db)):
-    """返回深V策略4条随机指标线 + BBI"""
+    """返回深V策略2条随机指标线（短期+长期）+ BBI"""
     rows = (
         db.query(MarketData)
         .filter(MarketData.stock_code == code)
@@ -148,8 +148,6 @@ def get_deep_v(code: str, days: int = 120, db: Session = Depends(get_db)):
         return result
 
     short_line = calc_line(n1)
-    mid_line = calc_line(10)
-    mid_long_line = calc_line(20)
     long_line = calc_line(n2)
 
     # BBI = (MA3 + MA6 + MA12 + MA24) / 4
@@ -167,8 +165,6 @@ def get_deep_v(code: str, days: int = 120, db: Session = Depends(get_db)):
         "code": code,
         "dates": [str(r.trade_date) for r in rows],
         "short_line": short_line,
-        "mid_line": mid_line,
-        "mid_long_line": mid_long_line,
         "long_line": long_line,
         "bbi": bbi,
     }
