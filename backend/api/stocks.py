@@ -49,9 +49,21 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)):
     ).first()
     watchlist_added_at = str(watch.created_at) if watch else None
 
+    from backend.models.financials import Financials
+    fin = db.query(Financials).filter(
+        Financials.stock_code == code
+    ).order_by(Financials.report_date.desc()).first()
+
     return {
         "code": stock.code, "name": stock.name, "exchange": stock.exchange,
         "industry": stock.industry, "watchlist_added_at": watchlist_added_at,
+        "pe": fin.pe if fin else None,
+        "pb": fin.pb if fin else None,
+        "roe": fin.roe if fin else None,
+        "revenue_growth": fin.revenue_growth if fin else None,
+        "profit_growth": fin.profit_growth if fin else None,
+        "market_cap": fin.market_cap if fin else None,
+        "report_date": str(fin.report_date) if fin else None,
     }
 
 

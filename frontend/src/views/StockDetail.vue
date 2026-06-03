@@ -18,6 +18,7 @@
           <button class="btn btn-primary btn-sm" :disabled="watching" @click="addWatch">{{ watching ? '加入中...' : '确认' }}</button>
           <button class="btn btn-default btn-sm" @click="showAddForm = false; addTarget = ''; addStopLoss = ''">取消</button>
         </div>
+        <button v-if="stock.name" class="btn btn-primary btn-sm" @click="openAiAnalysis">AI 分析</button>
       </div>
     </div>
 
@@ -224,16 +225,39 @@ function renderChart(kline, kdj, vol, deepV) {
 
         // K-line tooltip with OHLC + change % + trend indicators
         if (first.seriesName === 'K线') {
+          // Extract OHLC: ECharts 5.5 prepends the x-axis index to the value array,
+          // turning our [open,close,low,high] into [index,open,close,low,high] (5 elts).
+          // Older ECharts versions keep the 4-element array. Handle both.
           const d = first.data
-          if (!d || !d.value) return ''
-          const v = d.value
+          let raw = null
+          if (d && typeof d === 'object') {
+            if (!Array.isArray(d) && Array.isArray(d.value)) {
+              raw = d.value
+            } else if (Array.isArray(d) && d.length >= 4) {
+              raw = d
+            }
+          }
+          if (!raw && first.value && Array.isArray(first.value) && first.value.length >= 4) {
+            raw = first.value
+          }
+          if (!raw || raw.length < 4) return ''
+
+          // raw = [open,close,low,high] (4) or [x,open,close,low,high] (5)
+          const off = raw.length >= 5 ? 1 : 0
+          const o = raw[off], c = raw[off + 1], l = raw[off + 2], h = raw[off + 3]
+
           const date = first.axisValue
+
+          // changePct: from our original data object
           let changeHtml = ''
-          if (d.changePct != null) {
-            const c = parseFloat(d.changePct)
-            const color = c >= 0 ? '#cf1322' : '#3f8600'
-            const sign = c >= 0 ? '+' : ''
-            changeHtml = `<br/>涨跌: <span style="color:${color};font-weight:bold">${sign}${d.changePct}%</span>`
+          const cp = (d && typeof d === 'object' && !Array.isArray(d) && d.changePct != null)
+            ? d.changePct
+            : (first.changePct != null ? first.changePct : null)
+          if (cp != null) {
+            const pct = parseFloat(cp)
+            const color = pct >= 0 ? '#cf1322' : '#3f8600'
+            const sign = pct >= 0 ? '+' : ''
+            changeHtml = `<br/>涨跌: <span style="color:${color};font-weight:bold">${sign}${cp}%</span>`
           }
           // Extract trend indicator values from params
           const zsShort = params.find(p => p.seriesName === '知行短期(双EMA10)')
@@ -247,7 +271,7 @@ function renderChart(kline, kdj, vol, deepV) {
           }
           return `<div style="font-size:12px">
             <b>${date}</b><br/>
-            开: ${v[0].toFixed(2)} 收: ${v[1].toFixed(2)} 低: ${v[2].toFixed(2)} 高: ${v[3].toFixed(2)}
+            开: ${o.toFixed(2)} 收: ${c.toFixed(2)} 低: ${l.toFixed(2)} 高: ${h.toFixed(2)}
             ${changeHtml}${trendHtml}
           </div>`
         }
@@ -396,6 +420,57 @@ async function addWatch() {
   } finally {
     watching.value = false
   }
+}
+
+function buildAiPrompt() {
+  const s = stock.value
+  const finLines = []
+  if (s.pe != null) finLines.push(`- 市盈率(PE): ${s.pe}`)
+  if (s.pb != null) finLines.push(`- 市净率(PB): ${s.pb}`)
+  if (s.roe != null) finLines.push(`- ROE: ${s.roe}%`)
+  if (s.revenue_growth != null) finLines.push(`- 营收增长率: ${s.revenue_growth}%`)
+  if (s.profit_growth != null) finLines.push(`- 净利润增长率: ${s.profit_growth}%`)
+  if (s.market_cap != null) finLines.push(`- 总市值: ${s.market_cap}元`)
+  if (s.report_date != null) finLines.push(`- 财务数据截止: ${s.report_date}`)
+  const finSection = finLines.length > 0 ? `\n\n【财务数据】\n${finLines.join('\n')}` : ''
+
+  return `你是一位专业的A股投资分析师，请对以下股票进行多维度分析。
+
+【股票信息】
+- 名称：${s.name}（${s.code}）
+- 行业：${s.industry || '未知'}
+- 交易所：${s.exchange}${finSection}
+
+请从以下五个方面给出详细分析：
+
+一、近期趋势分析
+分析近期的价格走势特征、成交量变化规律，以及各项技术指标（均线、KDJ等）所反映的趋势信号。判断当前处于上升/下降/震荡区间，以及关键支撑位和压力位。
+
+二、行业分析
+分析该股票所属行业（${s.industry || '未知'}）当前的行业景气度、政策环境、产业链位置、竞争格局。该行业是否处于上行周期，政策面是利好还是利空。
+
+三、财报解析
+解读该公司的基本面状况，包括盈利能力（ROE）、成长性（营收/利润增长情况）、估值水平（PE、PB、市值）等核心财务指标所反映的公司质地。如有明显亮点或风险点请指出。
+
+四、热点相关性
+判断该股票及所属行业是否与当前市场的核心热点（如AI、新能源、半导体、低空经济、中特估、新质生产力等）有关联，契合程度如何，是否具备主题催化条件。
+
+五、综合建议
+综合以上分析，给出中短期（1-3个月）的投资建议（推荐买入/持有/观望/规避）以及对应的风险提示。请标注分析中不确定的部分。
+
+注：请基于公开市场信息和客观逻辑进行分析，不做内幕消息的揣测。`
+}
+
+function openAiAnalysis() {
+  const prompt = buildAiPrompt()
+  navigator.clipboard.writeText(prompt).then(() => {
+    store.message = { type: 'success', text: '分析提示已复制到剪贴板，正在打开 DeepSeek 对话页面...' }
+    window.open('https://chat.deepseek.com', '_blank')
+    setTimeout(() => store.clearMessage(), 8000)
+  }).catch(() => {
+    store.message = { type: 'error', text: '复制失败，正在打开 DeepSeek，请在页面中手动粘贴（Ctrl+V）。' }
+    window.open('https://chat.deepseek.com', '_blank')
+  })
 }
 </script>
 
