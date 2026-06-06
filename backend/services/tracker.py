@@ -19,6 +19,46 @@ def _get_latest_close(db: Session, code: str) -> float:
     return float(row.close) if row and row.close else 0
 
 
+def _get_horse_label(db: Session, wl: Watchlist) -> str:
+    """计算神马等级标签。
+    特等马: 自加入日起收盘价连续每日上涨（严格递增）
+    一等马: 未连续上涨，但累计收益 > 0
+    低等马: 累计收益 <= 0 且 > -3%，且未触发止损
+    其余返回空字符串。
+    """
+    # 加入不足2天的不统计
+    if (date.today() - wl.added_date).days <= 1:
+        return ""
+
+    rows = (
+        db.query(MarketData)
+        .filter(
+            MarketData.stock_code == wl.stock_code,
+            MarketData.trade_date >= wl.added_date,
+            MarketData.trade_date <= date.today(),
+        )
+        .order_by(MarketData.trade_date.asc())
+        .all()
+    )
+
+    closes = [float(r.close) for r in rows if r.close and r.close > 0]
+
+    if len(closes) >= 2:
+        if all(closes[i] > closes[i - 1] for i in range(1, len(closes))):
+            return "特等马"
+
+    if wl.cumulative_return is not None and wl.cumulative_return > 0:
+        return "一等马"
+
+    if wl.cumulative_return is not None and -3 < wl.cumulative_return <= 0:
+        if wl.stop_loss_price is None or (
+            wl.latest_price is not None and wl.latest_price >= wl.stop_loss_price
+        ):
+            return "低等马"
+
+    return ""
+
+
 def add_to_watchlist(db: Session, code: str, notes: str = "", source: str = "手动") -> Watchlist:
     """添加股票到追踪列表。加入价取自本地最新收盘价，不调外部API。"""
     existing = db.query(Watchlist).filter(
@@ -92,7 +132,7 @@ def update_watchlist_prices(db: Session) -> int:
     return updated
 
 
-def _item_to_dict(wl: Watchlist) -> dict:
+def _item_to_dict(wl: Watchlist, db: Session = None) -> dict:
     """将 Watchlist 对象序列化为字典，包含所有显示字段。"""
     sell_return = None
     if wl.sell_price and wl.added_price and wl.added_price > 0:
@@ -113,6 +153,7 @@ def _item_to_dict(wl: Watchlist) -> dict:
         "stop_loss_price": wl.stop_loss_price,
         "sell_price": wl.sell_price,
         "sell_return": sell_return,
+        "divine_horse": _get_horse_label(db, wl) if db else "",
     }
 
 
@@ -141,7 +182,7 @@ def get_watchlist_stats(db: Session) -> dict:
         "today_avg_change": _get_today_avg_change(db, active_items),
         "best": _get_best_worst(active_items, best=True),
         "worst": _get_best_worst(active_items, best=False),
-        "active_items": [_item_to_dict(wl) for wl in active_items],
+        "active_items": [_item_to_dict(wl, db) for wl in active_items],
         "closed_items": [_item_to_dict(wl) for wl in closed_items],
     }
 

@@ -57,7 +57,7 @@
         <thead>
           <tr>
             <th>代码</th><th>名称</th><th>来源</th><th>加入日期</th>
-            <th>加入价</th><th>最新价</th>
+            <th>加入价</th><th>最新价</th><th>神马</th>
             <th>预期价</th><th>止损价</th><th>盈亏比</th>
             <th>卖出价</th>
             <th>累计收益</th><th>持有天数</th>
@@ -73,6 +73,11 @@
             <td>{{ item.added_date }}</td>
             <td>{{ item.added_price }}</td>
             <td>{{ item.latest_price }}</td>
+            <td>
+              <span v-if="item.divine_horse" :style="{ color: horseColor(item.divine_horse), fontWeight: 'bold' }">
+                {{ item.divine_horse }}
+              </span>
+            </td>
             <td>
               <input type="number" step="0.01" class="price-input"
                 :value="item.target_price"
@@ -153,6 +158,11 @@ function calcPLRatio(item) {
   if (!tp || !sl || !ap || ap === sl) return '-'
   const ratio = (tp - ap) / (ap - sl)
   return ratio > 0 ? ratio.toFixed(2) : '-'
+}
+
+function horseColor(label) {
+  const colors = { '特等马': '#cf1322', '一等马': '#faad14', '低等马': '#3f8600' }
+  return colors[label] || 'inherit'
 }
 
 async function saveField(item, field, rawValue) {

@@ -147,6 +147,11 @@ function onResize() {
   if (chart) chart.resize()
 }
 
+function getLimitThreshold(code) {
+  if (code.startsWith('30') || code.startsWith('688')) return 19.5
+  return 9.5
+}
+
 function renderChart(kline, kdj, vol, deepV) {
   if (!chartRef.value) return
   chart = echarts.init(chartRef.value)
@@ -161,6 +166,25 @@ function renderChart(kline, kdj, vol, deepV) {
     value: d,
     changePct: i > 0 ? ((d[1] - kline.ohlc[i - 1][1]) / kline.ohlc[i - 1][1] * 100).toFixed(2) : null,
   }))
+
+  // Detect 一字涨停 in last ~1 month (22 trading days)
+  const limitThreshold = getLimitThreshold(stock.value.code)
+  const yiZiZhangTingPoints = []
+  const lookback = Math.min(22, kline.ohlc.length - 1)
+  const startIdx = kline.ohlc.length - lookback
+  for (let i = startIdx; i < kline.ohlc.length; i++) {
+    const [o, c, l, h] = kline.ohlc[i]
+    if (o === h && h === l && l === c) {
+      const prevClose = kline.ohlc[i - 1]?.[1]
+      if (prevClose && (c - prevClose) / prevClose * 100 > limitThreshold) {
+        yiZiZhangTingPoints.push({
+          name: '一字涨停，不要碰',
+          coord: [kline.dates[i], h],
+          value: '一',
+        })
+      }
+    }
+  }
 
   // Volume data with colors
   const volData = (vol && vol.volumes)
@@ -300,6 +324,15 @@ function renderChart(kline, kdj, vol, deepV) {
         name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
         data: ohlcData,
         itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+        markPoint: {
+          data: yiZiZhangTingPoints,
+          symbol: 'rect',
+          symbolSize: [24, 22],
+          symbolOffset: [0, '-60%'],
+          itemStyle: { color: '#cf1322', borderColor: '#cf1322' },
+          label: { show: true, color: '#fff', fontSize: 14, fontWeight: 'bold', formatter: '一' },
+          tooltip: { trigger: 'item', formatter: '一字涨停，不要碰' },
+        },
       },
 
       // ---- Grid 0 overlay: Trend indicators ----
